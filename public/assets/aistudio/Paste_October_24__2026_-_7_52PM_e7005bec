@@ -1,0 +1,846 @@
+# PROMPT GÉNÉRAL DE REFONTE ET D'AMÉLIORATION DE BOUTIKA — GOOGLE AI STUDIO (GEMINI)
+
+## 1. TON RÔLE ET TA MISSION
+
+Tu es un ingénieur logiciel senior, architecte SaaS, expert React, TypeScript, Supabase, PostgreSQL, sécurité informatique, e-commerce, UX/UI et intelligence artificielle.
+
+Tu travailles directement sur mon projet existant **Boutika dans Google AI Studio**.
+
+Ta mission consiste à auditer, corriger, améliorer et compléter l'application actuelle pour en faire une véritable plateforme SaaS de commerce en ligne, fonctionnelle, sécurisée, évolutive et prête à être commercialisée.
+
+Je ne veux pas une nouvelle maquette, une simple démonstration visuelle ou une application reconstruite de zéro. Je veux que tu travailles sur le code existant, que tu conserves les fonctionnalités déjà opérationnelles et que tu intègres progressivement toutes les améliorations décrites ci-dessous.
+
+**Tu dois réellement implémenter les fonctionnalités dans le code lorsqu'elles sont réalisables. Ne te contente pas de m'expliquer comment les développer.**
+
+Pour les opérations qui nécessitent une intervention externe, un fournisseur, une configuration manuelle ou une autorisation que tu ne possèdes pas, prépare le code et les instructions nécessaires, puis indique clairement ce qui reste à faire.
+
+Ne prétends jamais qu'une fonctionnalité fonctionne réellement si elle n'a pas été implémentée et testée.
+
+---
+
+# 2. CONTEXTE TECHNIQUE EXISTANT
+
+Boutika dispose déjà d'une application développée principalement avec :
+
+- React.
+- TypeScript.
+- Vite.
+- Tailwind CSS.
+- Supabase pour la base de données et l'authentification.
+
+Le projet Supabase existe déjà. Il comprend notamment les tables suivantes :
+
+- `profiles`
+- `stores`
+- `products`
+- `orders`
+- `order_items`
+- `subscriptions`
+- `payments`
+- `payment_events`
+- `support_tickets`
+
+L'application comporte déjà un site public, une authentification, un espace vendeur, des boutiques publiques et un tableau de bord Super Admin.
+
+Des travaux ont déjà été effectués sur l'authentification Supabase, les profils, les boutiques, les redirections après connexion, la récupération du mot de passe et les pages d'authentification.
+
+Cependant, certaines fonctionnalités ont pu être simulées ou partiellement développées. Tu dois donc vérifier l'état réel du projet avant de modifier quoi que ce soit.
+
+### Règles impératives
+
+1. Inspecte le code et l'architecture existants avant d'agir.
+2. Identifie les fonctionnalités réelles, incomplètes, simulées ou absentes.
+3. Préserve les composants et les données qui fonctionnent.
+4. Ne recrée pas les tables existantes sans nécessité démontrée.
+5. Ne supprime pas les données existantes sans sauvegarde, inventaire et validation.
+6. Ne remplace pas l'application entière par une nouvelle architecture par défaut.
+7. Utilise les migrations SQL pour les modifications de base de données.
+8. Vérifie la compilation et les erreurs après chaque étape importante.
+9. Si le contexte est trop volumineux pour tout réaliser en une seule passe, avance par phases, conserve une liste de progression et termine chaque phase de manière cohérente.
+10. Ne me demande pas de répéter les exigences décrites dans ce prompt.
+
+---
+
+# 3. NETTOYAGE DE L'APPLICATION ET SUPPRESSION DES ÉLÉMENTS DE TEST
+
+Je veux une application propre, destinée aux vrais utilisateurs.
+
+Commence par examiner les comptes, les boutiques, les produits, les commandes et les données de démonstration.
+
+Identifie les éléments de test et les outils de développement encore visibles.
+
+Supprime ou désactive les fonctionnalités de démonstration qui ne doivent pas exister dans la version de production, notamment les interfaces permettant de changer artificiellement de rôle ou d'imiter un autre utilisateur.
+
+Les vendeurs ne doivent jamais pouvoir accéder aux fonctions de développement ou aux outils réservés aux administrateurs.
+
+**Attention : ne supprime pas automatiquement tous les comptes existants.**
+
+Dresse d'abord un inventaire des comptes et données potentiellement fictifs. Prépare un mécanisme de nettoyage sécurisé, avec sauvegarde et validation explicite avant toute suppression définitive.
+
+Les suppressions de comptes Auth doivent être effectuées côté serveur avec les autorisations nécessaires, jamais avec une clé privilégiée exposée dans le frontend.
+
+Remplace les données fictives utilisées dans les tableaux de bord par des données réelles lorsque les fonctionnalités correspondantes existent.
+
+---
+
+# 4. AUTHENTIFICATION ET CRÉATION DE BOUTIQUE
+
+Fiabilise le parcours d'inscription et de connexion.
+
+Un vendeur doit pouvoir :
+
+- Créer un compte.
+- Confirmer son adresse e-mail lorsque cela est requis.
+- Se connecter et se déconnecter.
+- Récupérer son mot de passe.
+- Compléter son profil.
+- Créer sa boutique.
+- Reprendre un processus d'inscription incomplet.
+- Accéder à son tableau de bord après authentification.
+
+Lorsqu'un vendeur configure sa boutique, il doit pouvoir renseigner :
+
+- Le nom de la boutique.
+- Son logo.
+- Une description.
+- La catégorie d'activité.
+- Sa localisation.
+- Les coordonnées utiles.
+- L'adresse web de sa boutique.
+
+Les catégories doivent inclure notamment la mode, les vêtements, la beauté, l'alimentation, les pâtisseries, les restaurants, l'électronique, l'artisanat et d'autres catégories pertinentes.
+
+Le parcours doit être simple, progressif et adapté aux personnes qui ne maîtrisent pas les outils techniques.
+
+Si un compte Auth existe mais que son profil ou sa boutique manque, affiche un parcours de réparation ou de finalisation approprié.
+
+Empêche la création de boutiques en double et vérifie les noms et les adresses web avant de les enregistrer.
+
+Le vendeur choisit sa formule d'abonnement après la configuration initiale de sa boutique.
+
+---
+
+# 5. MARKETPLACE PUBLIQUE POUR LES ACHETEURS
+
+Boutika doit proposer deux expériences complémentaires :
+
+- Un espace vendeur pour créer et gérer une boutique.
+- Une marketplace permettant aux acheteurs de découvrir des boutiques et des produits.
+
+Un acheteur n'a pas besoin de devenir vendeur pour consulter la marketplace.
+
+Crée ou améliore une interface de découverte avec :
+
+- Une page d'accueil attractive.
+- Une recherche de boutiques et de produits.
+- Des catégories.
+- Des filtres pertinents.
+- Des boutiques mises en avant.
+- Des fiches produits détaillées.
+- Des liens vers les boutiques.
+- Un affichage responsive.
+- Des états de chargement, d'erreur et d'absence de résultats.
+
+Les boutiques suspendues ou masquées ne doivent pas apparaître publiquement.
+
+### Boutiques fondatrices et promotions
+
+Je souhaite que les cinq premières boutiques fondatrices puissent bénéficier d'une mise en avant initiale, en première ligne de la marketplace.
+
+Cette fonctionnalité doit être administrable. Le Super Admin doit pouvoir choisir les boutiques mises en avant, modifier leur ordre et définir la durée de la promotion.
+
+Ne code pas un classement permanent impossible à modifier.
+
+Prévois également un système général de promotion des boutiques, avec dates de début et de fin, statut et règles d'affichage.
+
+---
+
+# 6. CRÉATION ET GESTION DES PRODUITS
+
+Le tableau de bord vendeur doit permettre une gestion complète des produits.
+
+Chaque produit doit pouvoir contenir :
+
+- Un nom.
+- Une description.
+- Des images.
+- Un prix.
+- Une catégorie.
+- Des couleurs.
+- Des tailles.
+- Des variantes.
+- Des quantités en stock.
+- Une référence facultative.
+- Un statut de publication.
+- Un statut de disponibilité.
+- Un prix promotionnel si nécessaire.
+
+La gestion des variantes doit permettre d'associer des stocks différents aux combinaisons pertinentes.
+
+Exemple : un vêtement disponible en plusieurs tailles et couleurs doit pouvoir avoir des quantités distinctes pour chaque combinaison.
+
+Le vendeur doit pouvoir créer, modifier, publier, dépublier et supprimer ses produits selon les permissions applicables.
+
+Les limites du nombre de produits dépendent de l'abonnement.
+
+Les quantités et les prix doivent être vérifiés côté serveur lors des commandes.
+
+---
+
+# 7. FICHES PRODUITS ET PARCOURS DE COMMANDE
+
+Dans la fonctionnalité « Voir une boutique démo », et dans les boutiques réelles, cliquer sur un produit doit ouvrir sa fiche détaillée.
+
+Ne déclenche pas directement une action « Ajouter au panier » à la place de cette expérience.
+
+La fiche produit doit afficher :
+
+- Les images.
+- Le nom.
+- La description.
+- Le prix.
+- Les variantes disponibles.
+- Les couleurs et tailles.
+- Les quantités disponibles.
+- Les informations pertinentes sur la boutique.
+
+L'acheteur choisit les options et les quantités avant de passer commande.
+
+Le parcours de commande dépend de l'abonnement du vendeur.
+
+Pour Standard, le parcours passe principalement par la préparation d'un message WhatsApp.
+
+Pour Premium et VIP, un formulaire de commande avancé est disponible.
+
+Ne considère jamais une commande comme payée simplement parce qu'elle a été créée.
+
+---
+
+# 8. LES TROIS FORMULES D'ABONNEMENT
+
+Les formules doivent être configurables depuis le Super Admin, sans devoir modifier manuellement plusieurs composants frontend.
+
+Les limites doivent être appliquées côté serveur ou par des règles de base de données sécurisées.
+
+## 8.1. Standard
+
+Limite maximale : **50 produits**.
+
+Fonctionnalités :
+
+- Création d'une boutique.
+- Logo et informations de la boutique.
+- Gestion des produits.
+- Gestion des stocks.
+- Adresse web publique.
+- Possibilité de copier le lien de la boutique.
+- Parcours de commande par WhatsApp.
+
+Pour cette formule, je ne souhaite pas de boutons de partage direct ou d'intégrations sociales visibles dans la boutique. Le vendeur peut copier son lien et le transmettre manuellement.
+
+Un agent automatisé peut publier le lien de la boutique une fois toutes les 24 heures sur un seul réseau social pris en charge, si une intégration réelle et autorisée permet cette opération.
+
+Lorsqu'un acheteur sélectionne des produits et clique sur « Commander », prépare un message détaillé contenant les produits, les variantes, les quantités et les prix.
+
+Le client doit ensuite pouvoir envoyer ce message au vendeur via WhatsApp. Si l'envoi exige une action de l'utilisateur dans WhatsApp, indique-le clairement.
+
+## 8.2. Premium
+
+Limite maximale : **150 produits**.
+
+Inclure les fonctionnalités Standard, avec :
+
+- Boutons de partage manuel vers les réseaux sociaux.
+- Ouverture des applications ou sites correspondants.
+- Gestion avancée des commandes.
+- Formulaire de commande.
+- Choix du mode de paiement.
+- Informations nécessaires sur l'acheteur.
+- Informations de livraison.
+- Confirmation de commande.
+- Notification au vendeur.
+- Analyses commerciales assistées par IA.
+
+Les analyses doivent notamment présenter :
+
+- Le total des ventes enregistrées.
+- Les produits les plus vendus.
+- Les produits les moins vendus.
+- Les produits en rupture de stock.
+- L'évolution des ventes par période.
+
+Les indicateurs doivent être calculés à partir des données réelles, en distinguant les commandes des ventes effectivement payées.
+
+Un agent peut publier le lien de la boutique toutes les 24 heures sur les statuts de deux réseaux sociaux pris en charge, si les API et autorisations nécessaires permettent réellement cette publication.
+
+## 8.3. VIP
+
+Limite maximale : **500 produits**.
+
+Inclure les fonctionnalités Premium, avec :
+
+- Analyses avancées.
+- Recommandations de stratégie commerciale.
+- Assistance IA à la gestion de la boutique.
+- Conversation avec un agent IA.
+- Assistance à la création et à la modification de produits.
+- Analyse de photos de produits.
+- Génération de descriptions et de propositions de catégories.
+- Préparation automatique de fiches produits.
+- Notifications avancées.
+
+Le vendeur doit pouvoir photographier ou importer un produit. L'IA analyse l'image et propose les informations pertinentes afin d'éviter de saisir manuellement chaque champ.
+
+Les informations proposées doivent pouvoir être vérifiées et corrigées avant publication.
+
+Pour les opérations importantes — prix, stocks, suppressions ou publications — prévois des confirmations adaptées aux permissions définies.
+
+Un agent peut publier le lien de la boutique toutes les 24 heures sur les statuts des réseaux sociaux connectés et autorisés, lorsque leurs capacités techniques le permettent.
+
+Ne promets aucune automatisation impossible avec les API disponibles.
+
+---
+
+# 9. ESSAI GRATUIT DE TROIS JOURS
+
+Après le choix d'une formule, le vendeur bénéficie d'un essai gratuit de trois jours.
+
+Le système doit enregistrer la date de début, la date de fin et l'état de l'essai.
+
+Un vendeur ne doit bénéficier de cet essai qu'une seule fois selon les règles d'éligibilité définies.
+
+Le système doit :
+
+1. Activer l'essai au bon moment.
+2. Afficher la date de fin.
+3. Envoyer un rappel un jour avant l'expiration.
+4. Informer le vendeur lorsque l'essai se termine.
+5. Permettre de souscrire à la formule choisie.
+6. Permettre de choisir une autre formule.
+7. Bloquer les fonctions réservées aux abonnés si l'essai expire sans activation d'un abonnement.
+8. Afficher un message clair demandant d'activer un abonnement.
+9. Préserver les données de la boutique pendant cette période de blocage, conformément aux règles de conservation définies.
+
+Les contrôles d'éligibilité et d'expiration doivent être effectués côté serveur ou dans la base de données.
+
+Ne te contente pas de cacher des boutons dans l'interface.
+
+Prévois des notifications par e-mail, SMS et WhatsApp selon les fournisseurs réellement configurés, les autorisations et les consentements nécessaires.
+
+Les rappels doivent fonctionner même si le vendeur ne laisse pas son navigateur ouvert. Utilise un mécanisme de tâches planifiées côté serveur.
+
+---
+
+# 10. FORMULAIRE DE COMMANDE PREMIUM ET VIP
+
+Le formulaire de commande doit pouvoir recueillir :
+
+- Les informations nécessaires sur l'acheteur.
+- Les produits sélectionnés.
+- Les variantes.
+- Les quantités.
+- Les prix.
+- Le mode de paiement.
+- Les informations de livraison.
+- Les frais applicables.
+- Les instructions utiles.
+
+Après validation, la commande doit être enregistrée et le vendeur doit être notifié.
+
+Prévois un statut de commande et un historique de ses changements.
+
+Vérifie les stocks et les prix côté serveur. Empêche les quantités négatives, les prix manipulés depuis le navigateur et les doubles soumissions.
+
+Le traitement des commandes doit distinguer les états pertinents : en attente, confirmée, en préparation, expédiée ou livrée, annulée, selon le fonctionnement retenu.
+
+Les notifications doivent indiquer clairement si une commande a été créée, confirmée ou payée.
+
+---
+
+# 11. PAIEMENTS ET ABONNEMENTS PAYANTS
+
+Prépare une architecture permettant d'intégrer des fournisseurs de paiement adaptés au Sénégal et aux marchés visés.
+
+Ne simule pas un paiement réel.
+
+Le système doit distinguer :
+
+- L'abonnement sélectionné.
+- Le montant dû.
+- Le paiement en attente.
+- Le paiement confirmé.
+- Le paiement échoué.
+- L'annulation.
+- Le remboursement.
+- L'activation effective de l'abonnement.
+
+L'activation d'un abonnement payant doit reposer sur une confirmation fiable du paiement, par exemple un webhook vérifié côté serveur.
+
+Prévois une gestion des erreurs, des doublons et des événements reçus plusieurs fois.
+
+Ne stocke pas les secrets de paiement dans le frontend.
+
+Si aucun fournisseur n'est encore configuré, prépare l'intégration sans prétendre qu'elle est opérationnelle.
+
+---
+
+# 12. NOTIFICATIONS ET PARTAGE SUR LES RÉSEAUX SOCIAUX
+
+Crée une architecture de notifications réutilisable pour :
+
+- Les inscriptions.
+- Les essais gratuits.
+- Les abonnements.
+- Les paiements.
+- Les commandes.
+- Les ruptures de stock.
+- Les demandes de support.
+- Les événements administratifs importants.
+
+Prévois un historique de notification, un statut d'envoi et la gestion des erreurs.
+
+Pour WhatsApp, l'e-mail et le SMS, utilise des fournisseurs adaptés, configurés côté serveur.
+
+Pour les publications sociales automatiques, distingue clairement :
+
+- Le partage manuel d'un lien.
+- L'ouverture d'une application sociale.
+- La publication réellement automatisée par API.
+
+Les publications quotidiennes doivent utiliser une tâche planifiée côté serveur, respecter les autorisations, les quotas et les règles du fournisseur.
+
+Ne prétends pas publier sur les statuts WhatsApp ou sur d'autres réseaux si l'API utilisée ne prend pas en charge cette action.
+
+---
+
+# 13. TABLEAU DE BORD SUPER ADMIN
+
+Le Super Admin doit disposer d'un véritable centre de contrôle de toute la plateforme.
+
+Il doit pouvoir surveiller, administrer, modifier, améliorer, suspendre et supprimer les éléments autorisés de Boutika.
+
+## 13.1. Vue générale
+
+Afficher des statistiques réelles sur :
+
+- Le nombre de vendeurs.
+- Les boutiques actives.
+- Les nouveaux inscrits.
+- Les produits.
+- Les commandes.
+- Les abonnements.
+- Les essais gratuits.
+- Les paiements.
+- Les revenus.
+- Les demandes de support.
+- Les signalements.
+- Les incidents techniques.
+
+Les indicateurs doivent être calculés à partir des données réelles de Supabase.
+
+## 13.2. Gestion des vendeurs et des boutiques
+
+Permettre de :
+
+- Rechercher et filtrer les vendeurs.
+- Consulter les profils et les boutiques.
+- Consulter les abonnements et l'activité.
+- Modifier les informations administratives autorisées.
+- Suspendre ou réactiver une boutique.
+- Examiner les signalements.
+- Traiter les demandes de suppression.
+- Consulter l'historique des actions.
+
+Les actions sensibles nécessitent une confirmation et un motif.
+
+## 13.3. Gestion des abonnements
+
+Le Super Admin doit pouvoir :
+
+- Créer et modifier les formules.
+- Modifier les prix.
+- Modifier les limites de produits.
+- Activer ou désactiver des fonctionnalités.
+- Gérer les essais gratuits.
+- Consulter les abonnements actifs et expirés.
+- Consulter les paiements échoués.
+- Gérer les changements de formule.
+- Consulter l'historique des changements.
+
+## 13.4. Gestion des paiements et des revenus
+
+Afficher les transactions, les paiements confirmés, les échecs, les remboursements et les revenus de la plateforme.
+
+Les revenus de Boutika doivent être distingués du chiffre d'affaires réalisé par les vendeurs.
+
+## 13.5. Statistiques
+
+Prévoir des rapports sur :
+
+- L'évolution des inscriptions.
+- Les conversions des essais gratuits.
+- Les revenus récurrents.
+- Les désabonnements.
+- La répartition des abonnements.
+- L'activité des boutiques.
+- Les performances des promotions.
+- Les indicateurs de support.
+
+## 13.6. Promotions
+
+Permettre au Super Admin de gérer les boutiques mises en avant, les boutiques fondatrices, leur position, la durée de la promotion et son statut.
+
+## 13.7. Messages et support
+
+Centraliser les messages que les vendeurs envoient à Boutika.
+
+Permettre de :
+
+- Consulter les messages.
+- Répondre aux vendeurs.
+- Attribuer une priorité.
+- Suivre l'état d'une demande.
+- Consulter l'historique des échanges.
+- Traiter les réclamations.
+- Gérer les signalements.
+
+## 13.8. Modération
+
+Permettre de modérer les boutiques, produits et contenus signalés.
+
+Prévoir des motifs de modération, un historique, des actions de suspension et un processus de réexamen.
+
+## 13.9. Paramètres de la plateforme
+
+Permettre de gérer les paramètres autorisés :
+
+- Identité visuelle.
+- Catégories.
+- Abonnements.
+- Durée de l'essai gratuit.
+- Promotions.
+- Notifications.
+- Intégrations.
+- Règles de publication.
+- Paramètres de la marketplace.
+- Règles de modération.
+
+## 13.10. Surveillance technique
+
+Ajouter des outils de suivi de l'état des intégrations, des tâches planifiées, des erreurs, des événements de paiement et des notifications.
+
+Prévoir des journaux d'audit, une gestion des accès administrateurs et des mécanismes de sauvegarde.
+
+**Important : l'accès Super Admin doit être sécurisé côté serveur et dans la base de données. Un simple changement de rôle dans le frontend ne doit jamais donner des privilèges administratifs.**
+
+---
+
+# 14. QUEENCY — L'AGENT IA PRIVÉ DU SUPER ADMIN
+
+Le nom officiel de l'agent IA est **Queency**.
+
+Queency est un assistant intelligent réservé exclusivement au Super Admin de Boutika.
+
+Il doit se comporter comme un assistant personnel conversationnel capable de comprendre des instructions en langage naturel, d'analyser les données de la plateforme et d'aider à administrer Boutika.
+
+Il ne doit pas être accessible aux vendeurs ou aux acheteurs.
+
+## 14.1. Interface de Queency
+
+Créer une interface conversationnelle intégrée au tableau de bord Super Admin.
+
+L'administrateur doit pouvoir écrire des demandes et recevoir des réponses claires, contextualisées et utiles.
+
+Si une fonction vocale est ajoutée, elle doit reposer sur une solution réelle et configurée. Ne simule pas la reconnaissance vocale ou les réponses vocales.
+
+## 14.2. Analyse et recommandations
+
+Le Super Admin peut demander à Queency :
+
+- D'analyser les ventes et les revenus.
+- D'expliquer l'évolution des abonnements.
+- D'identifier les boutiques inactives.
+- De repérer les paiements échoués.
+- De résumer les messages des vendeurs.
+- De proposer des campagnes promotionnelles.
+- De préparer des réponses aux vendeurs.
+- De générer des rapports.
+- De suggérer des améliorations.
+- D'expliquer les alertes techniques.
+
+Queency doit utiliser les données réellement disponibles et indiquer lorsqu'il manque des informations.
+
+## 14.3. Gestion de la plateforme
+
+Le Super Admin peut demander :
+
+« Queency, aide-moi à gérer la plateforme et mon tableau de bord. »
+
+Queency doit comprendre la demande, demander des précisions si nécessaire, proposer un plan d'action et utiliser uniquement les outils autorisés.
+
+Il peut préparer ou exécuter des opérations administratives autorisées, selon les permissions définies.
+
+Il ne doit pas simplement répondre « C'est fait » sans avoir exécuté et vérifié l'opération.
+
+## 14.4. Missions à durée déterminée
+
+Le Super Admin doit pouvoir confier à Queency une mission pour une durée précise.
+
+Exemple :
+
+« Queency, pendant les deux prochaines heures, surveille les paiements échoués, signale les anomalies et prépare un rapport. »
+
+Chaque mission doit définir :
+
+- L'objectif.
+- Le périmètre.
+- La durée.
+- Les permissions.
+- Les actions autorisées.
+- Les actions nécessitant une confirmation.
+- Les conditions de notification.
+- Le statut.
+- Le journal des actions.
+- Le résultat final.
+
+Le Super Admin doit pouvoir consulter les missions en cours, les arrêter, les suspendre et révoquer leurs autorisations.
+
+Une mission doit s'arrêter automatiquement à l'heure prévue.
+
+Les missions qui continuent lorsque le navigateur est fermé doivent être gérées côté serveur, avec des tâches planifiées ou un mécanisme équivalent.
+
+Ne simule pas un agent qui travaille en arrière-plan lorsque ce n'est pas le cas.
+
+## 14.5. Autorisations et sécurité
+
+Queency doit fonctionner à travers des outils backend explicitement autorisés.
+
+Il ne doit jamais pouvoir :
+
+- S'accorder lui-même de nouveaux privilèges.
+- Contourner les politiques d'accès.
+- Exposer des secrets.
+- Supprimer définitivement des données sans validation.
+- Effectuer un remboursement sensible sans confirmation.
+- Modifier des paramètres financiers critiques sans autorisation.
+
+Chaque opération doit être journalisée.
+
+Les actions sensibles doivent nécessiter une confirmation explicite du Super Admin.
+
+Prévois des limites de coût, une gestion des erreurs et une protection contre les instructions malveillantes présentes dans les données de la plateforme.
+
+---
+
+# 15. SÉCURITÉ ET BASE DE DONNÉES
+
+Avant la mise en production, réalise un audit de sécurité complet.
+
+Vérifie les politiques RLS de toutes les tables et corrige les accès trop permissifs ou manquants.
+
+Les vendeurs ne doivent accéder qu'aux données autorisées de leurs propres boutiques.
+
+Les acheteurs ne doivent accéder qu'aux informations nécessaires à leurs parcours.
+
+Les opérations privilégiées doivent être effectuées côté serveur.
+
+Sécurise notamment :
+
+- Les profils.
+- Les boutiques.
+- Les produits.
+- Les variantes et stocks.
+- Les commandes.
+- Les lignes de commande.
+- Les abonnements.
+- Les paiements.
+- Les événements de paiement.
+- Les tickets de support.
+- Les paramètres administratifs.
+- Les missions de Queency.
+- Les journaux d'audit.
+
+Les rôles et privilèges ne doivent jamais dépendre uniquement d'une variable React ou d'un état stocké dans le navigateur.
+
+Ne place aucune clé `service_role`, clé privée de paiement ou secret IA dans le code frontend.
+
+Utilise des fonctions serveur ou des mécanismes Supabase adaptés lorsque des opérations privilégiées sont nécessaires.
+
+Les fonctions SQL avec privilèges doivent être conçues avec des permissions minimales et une configuration sécurisée.
+
+Prévois des migrations documentées et des sauvegardes avant les modifications importantes.
+
+---
+
+# 16. DESIGN ET EXPÉRIENCE UTILISATEUR
+
+Conserve l'identité visuelle existante lorsqu'elle est cohérente.
+
+L'application doit être moderne, professionnelle, rapide, intuitive et adaptée aux ordinateurs et aux téléphones.
+
+Le parcours d'un vendeur débutant doit être particulièrement simple.
+
+Tous les formulaires doivent être validés.
+
+Toutes les pages doivent gérer les états de chargement, les erreurs, les résultats vides et les confirmations.
+
+Tous les boutons doivent déclencher des actions réelles.
+
+Évite les éléments décoratifs qui semblent fonctionnels mais ne font rien.
+
+Les tableaux de bord doivent présenter des informations lisibles et pertinentes, avec filtres, recherche et pagination lorsque nécessaire.
+
+---
+
+# 17. PLAN D'EXÉCUTION OBLIGATOIRE
+
+Tu dois travailler par phases pour préserver la stabilité de l'application.
+
+## Phase 1 — Audit
+
+Inspecte le code, les tables, les politiques RLS, les routes et les fonctionnalités.
+
+Présente un diagnostic des éléments opérationnels, incomplets, simulés ou absents.
+
+## Phase 2 — Stabilisation
+
+Corrige les problèmes d'authentification, de rôles, de profils, de boutiques et de sécurité.
+
+Retire les outils de développement destinés à disparaître de la production.
+
+## Phase 3 — Produits et marketplace
+
+Finalise la gestion des produits, des variantes, des stocks, des fiches produits et la marketplace.
+
+## Phase 4 — Abonnements
+
+Implémente les trois formules, les limites de produits, l'essai gratuit, son expiration et les contrôles d'accès.
+
+## Phase 5 — Commandes et notifications
+
+Fiabilise les commandes, les notifications et la structure des paiements.
+
+Intègre les fournisseurs externes uniquement lorsque les configurations nécessaires sont disponibles.
+
+## Phase 6 — Super Admin
+
+Finalise le centre de contrôle, la gestion des vendeurs, des abonnements, des paiements, des promotions, des messages, de la modération et des paramètres.
+
+## Phase 7 — Queency
+
+Développe l'interface de l'agent, ses outils sécurisés, ses capacités d'analyse, ses missions temporaires et ses journaux d'exécution.
+
+## Phase 8 — Validation
+
+Vérifie les parcours réels, la sécurité, la compilation, les erreurs, les intégrations et le comportement sur mobile.
+
+À la fin de chaque phase :
+
+- Indique les fichiers modifiés.
+- Décris les fonctionnalités effectivement implémentées.
+- Indique les migrations SQL nécessaires.
+- Signale les configurations manuelles.
+- Liste les tests effectués et leurs résultats.
+- Identifie ce qui reste incomplet.
+
+Si une fonctionnalité dépend d'un fournisseur externe, indique précisément ce qui doit être configuré.
+
+---
+
+# 18. TESTS OBLIGATOIRES
+
+Vérifie au minimum :
+
+1. L'inscription et la confirmation d'un vendeur.
+2. La connexion et la récupération du mot de passe.
+3. La création d'un profil et d'une boutique.
+4. L'accès aux pages protégées.
+5. Les permissions entre vendeurs.
+6. La création et la modification de produits.
+7. Les variantes, quantités et stocks.
+8. La navigation sur la marketplace.
+9. Les fiches produits.
+10. Le parcours de commande Standard par WhatsApp.
+11. Le formulaire de commande Premium et VIP.
+12. Le calcul et la vérification des prix.
+13. Les limites de produits par formule.
+14. Le début et la fin de l'essai gratuit.
+15. Les notifications.
+16. Les paiements et leurs erreurs.
+17. Les permissions du Super Admin.
+18. La modération et la suspension d'une boutique.
+19. Les outils de Queency.
+20. L'expiration et l'arrêt des missions de Queency.
+21. Le comportement en cas de panne d'un fournisseur externe.
+22. Le responsive design.
+
+Ne déclare pas un test réussi sans avoir vérifié son résultat.
+
+---
+
+# 19. ORDRE DE PRIORITÉ ET GESTION DU BUDGET
+
+Je développe principalement seul et mon budget initial est inférieur à 100 euros.
+
+Tu dois donc éviter les dépenses inutiles et privilégier les fonctions essentielles au lancement.
+
+Priorité 1 :
+
+- Authentification fiable.
+- Création de boutiques.
+- Gestion des produits et stocks.
+- Marketplace.
+- Parcours de commande.
+- Sécurité et permissions.
+- Abonnements et contrôle de leurs limites.
+- Tableau de bord Super Admin opérationnel.
+
+Priorité 2 :
+
+- Notifications automatisées.
+- Paiements réels.
+- Analyses commerciales.
+- Promotions avancées.
+- Intégrations sociales réellement disponibles.
+
+Priorité 3 :
+
+- Queency avec missions autonomes.
+- Automatisations avancées.
+- Gestion de produits assistée par IA.
+- Analyses IA approfondies.
+- Fonctionnalités VIP avancées.
+
+Cette hiérarchie ne signifie pas qu'il faut abandonner les fonctions avancées. Elle sert à organiser leur réalisation et à limiter les coûts.
+
+Avant d'ajouter un service payant, évalue son coût, ses limites et les alternatives.
+
+---
+
+# 20. CE QUE J'ATTENDS DE TOI MAINTENANT
+
+Commence par auditer le projet actuel.
+
+Ne commence pas par générer une nouvelle application ou par remplacer tous les fichiers.
+
+Identifie d'abord ce qui existe réellement, ce qui doit être conservé, ce qui doit être corrigé et ce qui manque.
+
+Ensuite, implémente les améliorations par phases, en commençant par les problèmes critiques et les fonctionnalités prioritaires.
+
+Lorsque tu modifies le code :
+
+- Respecte la structure existante.
+- Réutilise les composants pertinents.
+- Évite les duplications.
+- Conserve les fonctionnalités déjà opérationnelles.
+- Vérifie les dépendances.
+- Vérifie la compilation.
+- Préserve les données.
+- Documente les migrations.
+- Ne prétends pas avoir exécuté une opération que tu n'as pas réellement exécutée.
+
+Si tu as besoin d'une configuration externe, demande-moi uniquement les informations nécessaires au moment où elles deviennent indispensables.
+
+**L'objectif final est une version réellement fonctionnelle de Boutika, avec une marketplace, trois formules d'abonnement, un espace vendeur complet, un Super Admin sécurisé et un agent IA privé nommé Queency, sans sacrifier les fonctionnalités déjà développées.**
+
+Commence maintenant par l'audit de l'application existante, puis avance méthodiquement vers cet objectif.
