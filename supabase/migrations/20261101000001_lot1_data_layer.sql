@@ -1,6 +1,7 @@
 -- ==============================================================================
 -- BOUTIKA : LOT 1 - COUCHE DE DONNÉES SUPABASE (SOURCE DE VÉRITÉ UNIQUE)
 -- Fichier : supabase/migrations/20261101000001_lot1_data_layer.sql
+-- (v2 : ajoute aussi les colonnes de base si une table existait déjà sans elles)
 --
 -- Objectif : plus aucune donnée métier dans le localStorage du navigateur.
 -- Boutiques, produits, commandes, abonnements, messages et audit vivent
@@ -25,6 +26,12 @@ CREATE TABLE IF NOT EXISTS public.stores (
   slug TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Colonnes de base (au cas où la table existait déjà sans elles)
+ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS vendor_id UUID;
+ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS slug TEXT;
+ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
 ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS whatsapp_number TEXT;
@@ -164,6 +171,11 @@ CREATE TABLE IF NOT EXISTS public.products (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Colonnes de base (au cas où la table existait déjà sans elles)
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS store_id TEXT;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS price NUMERIC DEFAULT 0;
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS compare_at_price NUMERIC;
@@ -238,6 +250,11 @@ CREATE TABLE IF NOT EXISTS public.orders (
   order_number TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Colonnes de base (au cas où la table existait déjà sans elles : c'est ce qui causait l'erreur order_number)
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS store_id TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS order_number TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS customer_name TEXT;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS customer_phone TEXT;
