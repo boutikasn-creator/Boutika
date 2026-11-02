@@ -17,16 +17,9 @@ import {
   KimsiMission,
   KimsiChatMessage
 } from '../types';
-import { 
-  INITIAL_PLANS, 
-  INITIAL_USERS, 
-  INITIAL_STORES, 
-  INITIAL_PRODUCTS, 
-  INITIAL_ORDERS, 
-  INITIAL_SUBSCRIPTION_RECORDS, 
-  INITIAL_CONTACT_MESSAGES, 
-  INITIAL_AUDIT_LOGS 
-} from '../data/mockData';
+// LOT 1 : seules la grille des formules et le profil "visiteur" restent locaux.
+// Boutiques, produits, commandes, abonnements, messages et audit viennent de Supabase.
+import { INITIAL_PLANS, INITIAL_USERS } from '../data/mockData';
 import { 
   supabase, 
   isSupabaseConfigured, 
@@ -36,6 +29,31 @@ import {
   getAppBaseUrl
 } from '../lib/supabase';
 import { askKimsiAI, analyzeProductPhotoVIP } from '../lib/gemini';
+import {
+  DEFAULT_LOGO_URL,
+  DEFAULT_BANNER_URL,
+  DEFAULT_CATEGORIES,
+  DEFAULT_DELIVERY_ZONES,
+  rowToStore,
+  storeToRow,
+  fetchStores,
+  fetchProducts,
+  fetchOrders,
+  fetchSubscriptionRecords,
+  fetchContactMessages,
+  fetchAuditLogs,
+  updateStoreRowDb,
+  insertProductDb,
+  updateProductDb,
+  deleteProductDb,
+  insertOrderDb,
+  updateOrderDb,
+  insertSubscriptionDb,
+  updateSubscriptionDb,
+  insertContactDb,
+  updateContactDb,
+  insertAuditLogDb
+} from '../lib/db';
 
 export type CurrentView = 
   | 'home' 
@@ -67,6 +85,7 @@ interface AppContextType {
   updateUserPassword: (newPassword: string) => Promise<{ success: boolean; message: string }>;
   signOutUser: () => Promise<void>;
   createStoreForVendor: (storeData: { name: string; whatsappNumber: string; city?: string; address?: string }) => Promise<{ success: boolean; message: string; store?: Store }>;
+  refreshData: (role?: UserRole) => Promise<void>;
 
   // Authentication State
   isAuthenticated: boolean;
@@ -96,6 +115,7 @@ interface AppContextType {
   updateStoreProfile: (storeId: string, updates: Partial<Store>) => void;
   updateFoundingStore: (storeId: string, isFounding: boolean, order?: number) => void;
   updateVipPromotion: (storeId: string, isPromoted: boolean, order?: number, badge?: string) => void;
+  setStorePlan: (storeId: string, planId: PlanTierId) => Promise<{ success: boolean; message: string }>;
   checkCanAddProduct: (storeId: string) => { allowed: boolean; reason?: string; maxAllowed: number; currentCount: number };
   checkStoreTrialStatus: (store: Store) => { isExpired: boolean; daysRemaining: number; trialEndDate: string; isActive: boolean };
   purgeDemoData: () => { success: boolean; message: string; purgedCounts: Record<string, number> };
@@ -122,6 +142,7 @@ interface AppContextType {
   updatePlan: (id: string, updates: Partial<SubscriptionPlan>) => void;
   subscriptionRecords: SubscriptionRecord[];
   simulateServerPaymentUpgrade: (planId: PlanTierId, gateway: 'Wave' | 'Orange Money' | 'Carte Bancaire') => Promise<{ success: boolean; message: string }>;
+  activateSubscriptionRecord: (recordId: string) => Promise<{ success: boolean; message: string }>;
 
   // Contact Messages & Support
   contactMessages: ContactMessage[];
@@ -157,45 +178,61 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+// Identifiant unique sans collision (crypto.randomUUID quand disponible)
+const uid = (prefix: string): string => {
+  const random =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  return `${prefix}-${random}`;
+};
+
+// Boutique "vide" utilisée tant qu'aucune boutique réelle n'est chargée (évite les plantages)
+const EMPTY_STORE: Store = {
+  id: '',
+  vendorId: '',
+  name: 'Boutique',
+  slug: '',
+  description: '',
+  whatsappNumber: '',
+  phone: '',
+  email: '',
+  address: '',
+  city: '',
+  logoUrl: DEFAULT_LOGO_URL,
+  bannerUrl: DEFAULT_BANNER_URL,
+  categories: DEFAULT_CATEGORIES,
+  deliveryZones: DEFAULT_DELIVERY_ZONES,
+  status: 'active',
+  planId: 'decouverte',
+  createdAt: new Date(0).toISOString()
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Navigation
   const [currentView, setCurrentView] = useState<CurrentView>('home');
   // Par défaut, un visiteur arrive déconnecté (role: 'visitor')
   const [currentUser, setCurrentUser] = useState<UserProfile>(INITIAL_USERS[2]);
-  const [activeStoreId, setActiveStoreId] = useState<string>('store-teranga-wax');
-  const [selectedStoreSlug, setSelectedStoreSlug] = useState<string>('teranga-wax');
+  const [activeStoreId, setActiveStoreId] = useState<string>('');
+  const [selectedStoreSlug, setSelectedStoreSlug] = useState<string>('');
 
-  // Core Data
-  const [stores, setStores] = useState<Store[]>(() => {
-    const saved = localStorage.getItem('boutika_stores');
-    return saved ? JSON.parse(saved) : INITIAL_STORES;
-  });
+  // Core Data : vide au départ, rempli depuis Supabase (aucune donnée de démonstration)
+  const [stores, setStores] = useState<Store[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [subscriptionRecords, setSubscriptionRecords] = useState<SubscriptionRecord[]>([]);
+  const [contactMessages, setContactMessages] = useState<ContactMessage[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
-  const [products, setProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('boutika_products');
-    return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
-  });
-
-  const [orders, setOrders] = useState<Order[]>(() => {
-    const saved = localStorage.getItem('boutika_orders');
-    return saved ? JSON.parse(saved) : INITIAL_ORDERS;
-  });
-
-  const [plans, setPlans] = useState<SubscriptionPlan[]>(INITIAL_PLANS);
-
-  const [subscriptionRecords, setSubscriptionRecords] = useState<SubscriptionRecord[]>(() => {
-    const saved = localStorage.getItem('boutika_subs');
-    return saved ? JSON.parse(saved) : INITIAL_SUBSCRIPTION_RECORDS;
-  });
-
-  const [contactMessages, setContactMessages] = useState<ContactMessage[]>(() => {
-    const saved = localStorage.getItem('boutika_contacts');
-    return saved ? JSON.parse(saved) : INITIAL_CONTACT_MESSAGES;
-  });
-
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem('boutika_audit');
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
+  // La grille tarifaire est une configuration (pas une donnée métier) : conservée localement
+  const [plans, setPlans] = useState<SubscriptionPlan[]>(() => {
+    try {
+      const saved = localStorage.getItem('boutika_plans');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      /* ignore */
+    }
+    return INITIAL_PLANS;
   });
 
   // Cart for Public Store
@@ -225,6 +262,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSupabaseStatus(status);
     return status;
   };
+
+  /**
+   * Recharge toutes les données depuis Supabase. Les droits sont appliqués par la RLS :
+   * - visiteur : boutiques actives + produits en ligne
+   * - vendeur  : + ses commandes, ses abonnements
+   * - super admin : tout, y compris messages de contact et journal d'audit
+   */
+  const refreshData = async (role: UserRole = 'visitor'): Promise<void> => {
+    if (!isSupabaseConfigured || !supabase) return;
+    const isLoggedIn = role !== 'visitor';
+    const isAdmin = role === 'super_admin';
+
+    const [s, p, o, sub, c, a] = await Promise.all([
+      fetchStores(),
+      fetchProducts(),
+      isLoggedIn ? fetchOrders() : Promise.resolve([] as Order[]),
+      isLoggedIn ? fetchSubscriptionRecords() : Promise.resolve([] as SubscriptionRecord[]),
+      isAdmin ? fetchContactMessages() : Promise.resolve([] as ContactMessage[]),
+      isAdmin ? fetchAuditLogs() : Promise.resolve([] as AuditLog[])
+    ]);
+
+    setStores(s);
+    setProducts(p);
+    setOrders(o);
+    setSubscriptionRecords(sub);
+    setContactMessages(c);
+    setAuditLogs(a);
+  };
+
+  // Construit la boutique du vendeur connecté à partir d'une ligne de la base
+  const buildVendorStore = (row: any, user: UserProfile): Store => ({
+    ...rowToStore(row),
+    email: row.email || user.email,
+    description: row.description || `Boutique officielle de ${user.fullName}`,
+    address: row.address || 'Médina, Dakar',
+    city: row.city || 'Dakar'
+  });
 
   /**
    * Synchronise la session Supabase, charge le profil utilisateur et la boutique associée.
@@ -257,7 +331,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const meta = session.user.user_metadata || {};
 
       // 1. Charger le profil depuis public.profiles
-      const { data: profile, error: profileErr } = await client
+      const { data: profile } = await client
         .from('profiles')
         .select('*')
         .eq('id', userId)
@@ -330,12 +404,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // Si le rôle est super_admin, pas besoin de boutique obligatoire
       if (resolvedUser.role === 'super_admin') {
+        await refreshData('super_admin');
         setAuthStatus('ready');
         return { status: 'ready', user: resolvedUser, store: null };
       }
 
       // 2. Charger la boutique depuis public.stores
-      const { data: storeRows, error: storeErr } = await client
+      const { data: storeRows } = await client
         .from('stores')
         .select('*')
         .eq('vendor_id', userId);
@@ -367,31 +442,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               .single();
 
             if (newStore && !createStoreErr) {
-              const formattedStore: Store = {
-                id: newStore.id,
-                vendorId: newStore.vendor_id,
-                name: newStore.name,
-                slug: newStore.slug,
-                description: newStore.description || `Boutique officielle de ${resolvedUser.fullName}`,
-                whatsappNumber: newStore.whatsapp_number,
-                phone: newStore.whatsapp_number,
-                email: resolvedUser.email,
-                address: newStore.address || 'Médina, Dakar',
-                city: newStore.city || 'Dakar',
-                logoUrl: newStore.logo_url || 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=300&q=80',
-                bannerUrl: newStore.banner_url || 'https://images.unsplash.com/photo-1558769132-cb1aea458c5e?auto=format&fit=crop&w=1200&q=80',
-                categories: ['Mode & Wax', 'Accessoires', 'Beauté'],
-                deliveryZones: [
-                  { id: 'zone-dakar-1', name: 'Dakar Centre / Plateau', price: 1500, estimatedTime: '24h - 48h' },
-                  { id: 'zone-dakar-2', name: 'Banlieue / Pikine / Guédiawaye', price: 2500, estimatedTime: '24h - 48h' },
-                  { id: 'zone-regions', name: 'Régions (Envoi GP / Poste)', price: 4000, estimatedTime: '3 - 5 jours' }
-                ],
-                status: newStore.status || 'active',
-                planId: newStore.plan_id || 'decouverte',
-                createdAt: newStore.created_at || new Date().toISOString()
-              };
-
-              setStores(prev => [formattedStore, ...prev.filter(s => s.id !== formattedStore.id)]);
+              const formattedStore = buildVendorStore(newStore, resolvedUser);
+              await refreshData(resolvedUser.role);
+              setStores(prev => prev.some(s => s.id === formattedStore.id) ? prev : [formattedStore, ...prev]);
               setActiveStoreId(formattedStore.id);
               setSelectedStoreSlug(formattedStore.slug);
               setAuthStatus('ready');
@@ -403,37 +456,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         // Si la boutique n'a pas pu être créée automatiquement : état explicite connected_no_store
+        await refreshData(resolvedUser.role);
         setAuthStatus('connected_no_store');
         return { status: 'connected_no_store', user: resolvedUser, store: null };
       }
 
       // Boutique trouvée dans Supabase !
-      const found = storeRows[0];
-      const formattedStore: Store = {
-        id: found.id,
-        vendorId: found.vendor_id,
-        name: found.name,
-        slug: found.slug,
-        description: found.description || `Boutique officielle de ${resolvedUser.fullName}`,
-        whatsappNumber: found.whatsapp_number,
-        phone: found.whatsapp_number,
-        email: resolvedUser.email,
-        address: found.address || 'Médina, Dakar',
-        city: found.city || 'Dakar',
-        logoUrl: found.logo_url || 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=300&q=80',
-        bannerUrl: found.banner_url || 'https://images.unsplash.com/photo-1558769132-cb1aea458c5e?auto=format&fit=crop&w=1200&q=80',
-        categories: ['Mode & Wax', 'Accessoires', 'Beauté'],
-        deliveryZones: [
-          { id: 'zone-dakar-1', name: 'Dakar Centre / Plateau', price: 1500, estimatedTime: '24h - 48h' },
-          { id: 'zone-dakar-2', name: 'Banlieue / Pikine / Guédiawaye', price: 2500, estimatedTime: '24h - 48h' },
-          { id: 'zone-regions', name: 'Régions (Envoi GP / Poste)', price: 4000, estimatedTime: '3 - 5 jours' }
-        ],
-        status: found.status || 'active',
-        planId: found.plan_id || 'decouverte',
-        createdAt: found.created_at || new Date().toISOString()
-      };
-
-      setStores(prev => [formattedStore, ...prev.filter(s => s.id !== formattedStore.id)]);
+      const formattedStore = buildVendorStore(storeRows[0], resolvedUser);
+      await refreshData(resolvedUser.role);
+      setStores(prev => prev.some(s => s.id === formattedStore.id) ? prev : [formattedStore, ...prev]);
       setActiveStoreId(formattedStore.id);
       setSelectedStoreSlug(formattedStore.slug);
       setAuthStatus('ready');
@@ -496,7 +527,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Récupération de la session existante au chargement
     client.auth.getSession().then(({ data: { session } }) => {
-      syncSessionAndUserData(session);
+      if (session) {
+        syncSessionAndUserData(session);
+      } else {
+        // Visiteur : on charge uniquement les boutiques et produits publics
+        setAuthStatus('unauthenticated');
+        refreshData('visitor');
+      }
     });
 
     // Synchronisation en direct sur les événements Auth
@@ -504,6 +541,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (event === 'SIGNED_OUT') {
         setCurrentUser(INITIAL_USERS[2]);
         setAuthStatus('unauthenticated');
+        setOrders([]);
+        setSubscriptionRecords([]);
+        setContactMessages([]);
+        setAuditLogs([]);
+        refreshData('visitor');
       } else if (session) {
         await syncSessionAndUserData(session);
       }
@@ -526,8 +568,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .catch(() => {});
   }, []);
 
-  // Synchronisation continue des métriques plateforme avec le démon serveur
+  // Synchronisation des métriques plateforme avec le démon serveur : réservée au Super Admin
   useEffect(() => {
+    if (currentUser.role !== 'super_admin') return;
     fetch('/api/platform/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -538,7 +581,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         contactMessages: contactMessages.map((m) => ({ id: m.id, subject: m.subject, status: m.status }))
       })
     }).catch(() => {});
-  }, [stores.length, products.length, orders.length, contactMessages.length]);
+  }, [currentUser.role, stores.length, products.length, orders.length, contactMessages.length]);
 
   const createStoreForVendor = async (storeData: {
     name: string;
@@ -578,29 +621,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, message: error.message };
       }
 
-      const formattedStore: Store = {
-        id: newRow.id,
-        vendorId: newRow.vendor_id,
-        name: newRow.name,
-        slug: newRow.slug,
-        description: `Boutique officielle de ${currentUser.fullName}`,
-        whatsappNumber: newRow.whatsapp_number,
-        phone: newRow.whatsapp_number,
-        email: currentUser.email,
-        address: newRow.address || 'Dakar',
-        city: newRow.city || 'Dakar',
-        logoUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=300&q=80',
-        bannerUrl: 'https://images.unsplash.com/photo-1558769132-cb1aea458c5e?auto=format&fit=crop&w=1200&q=80',
-        categories: ['Mode & Wax', 'Accessoires', 'Beauté'],
-        deliveryZones: [
-          { id: 'zone-dakar-1', name: 'Dakar Centre / Plateau', price: 1500, estimatedTime: '24h - 48h' },
-          { id: 'zone-dakar-2', name: 'Banlieue / Pikine / Guédiawaye', price: 2500, estimatedTime: '24h - 48h' },
-          { id: 'zone-regions', name: 'Régions (Envoi GP / Poste)', price: 4000, estimatedTime: '3 - 5 jours' }
-        ],
-        status: 'active',
-        planId: 'decouverte',
-        createdAt: new Date().toISOString()
-      };
+      const formattedStore = buildVendorStore(newRow, currentUser);
 
       setStores(prev => [formattedStore, ...prev.filter(s => s.id !== formattedStore.id)]);
       setActiveStoreId(formattedStore.id);
@@ -776,36 +797,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     setCurrentUser(INITIAL_USERS[2]);
     setAuthStatus('unauthenticated');
-    setActiveStoreId(INITIAL_STORES[0].id);
-    setSelectedStoreSlug(INITIAL_STORES[0].slug);
+    // Aucune donnée privée ne doit rester en mémoire après la déconnexion
+    setOrders([]);
+    setSubscriptionRecords([]);
+    setContactMessages([]);
+    setAuditLogs([]);
+    setActiveStoreId('');
+    setSelectedStoreSlug('');
     setCurrentView('home');
     showToast('Vous avez été déconnecté avec succès.');
   };
 
-  // Sync to local storage
+  // La grille tarifaire (configuration) reste en local
   useEffect(() => {
-    localStorage.setItem('boutika_stores', JSON.stringify(stores));
-  }, [stores]);
-
-  useEffect(() => {
-    localStorage.setItem('boutika_products', JSON.stringify(products));
-  }, [products]);
-
-  useEffect(() => {
-    localStorage.setItem('boutika_orders', JSON.stringify(orders));
-  }, [orders]);
-
-  useEffect(() => {
-    localStorage.setItem('boutika_subs', JSON.stringify(subscriptionRecords));
-  }, [subscriptionRecords]);
-
-  useEffect(() => {
-    localStorage.setItem('boutika_contacts', JSON.stringify(contactMessages));
-  }, [contactMessages]);
-
-  useEffect(() => {
-    localStorage.setItem('boutika_audit', JSON.stringify(auditLogs));
-  }, [auditLogs]);
+    try {
+      localStorage.setItem('boutika_plans', JSON.stringify(plans));
+    } catch {
+      /* ignore */
+    }
+  }, [plans]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -818,9 +828,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return new Intl.NumberFormat('fr-FR').format(amount) + ' FCFA';
   };
 
-  const activeStore = stores.find((s) => s.id === activeStoreId) || stores[0];
-  const storeProducts = products.filter((p) => p.storeId === activeStoreId);
-  const storeOrders = orders.filter((o) => o.storeId === activeStoreId);
+  // Boutique active : celle choisie, sinon la première boutique active, sinon une boutique vide
+  const activeStore =
+    stores.find((s) => s.id === activeStoreId) ||
+    stores.find((s) => s.status === 'active') ||
+    EMPTY_STORE;
+  const storeProducts = products.filter((p) => p.storeId === activeStore.id);
+  const storeOrders = orders.filter((o) => o.storeId === activeStore.id);
 
   const addAuditLog = (
     action: string, 
@@ -829,22 +843,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     severity: 'info' | 'warning' | 'critical' = 'info'
   ) => {
     const newLog: AuditLog = {
-      id: `aud-${Date.now()}`,
+      id: uid('aud'),
       timestamp: new Date().toISOString(),
       actorEmail: currentUser.email,
       actorRole: currentUser.role,
       action,
       target,
       details,
-      ipAddress: '196.207.240.12 (Dakar, SN)',
+      ipAddress: 'non collectée',
       severity
     };
     setAuditLogs((prev) => [newLog, ...prev]);
+    // Les actions des visiteurs anonymes ne sont pas écrites en base (évite le spam du journal)
+    if (currentUser.role !== 'visitor') {
+      insertAuditLogDb(newLog).catch(() => {});
+    }
   };
 
   // 3-Day Free Trial Verification & Commercial Rules
-  // Standard plan (0 FCFA) is permanently free up to 50 products and WhatsApp orders.
-  // The 3-day trial applies exclusively to testing Premium/VIP features.
+  // (inchangé dans le lot 1 : la règle "Standard payant + blocage" est traitée au lot 2)
   const checkStoreTrialStatus = (store: Store) => {
     const isStandardTier = store.planId === 'standard' || store.planId === 'decouverte';
     if (isStandardTier) {
@@ -899,6 +916,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Product Plan Limits Check (Standard: 50, Premium: 150, VIP: 500)
+  // Le trigger SQL guard_product_store_quota applique la même règle côté base.
   const checkCanAddProduct = (storeId: string) => {
     const store = stores.find((s) => s.id === storeId) || activeStore;
     const currentCount = products.filter((p) => p.storeId === storeId).length;
@@ -948,10 +966,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const newProduct: Product = {
       ...prodData,
-      id: `prod-${Date.now()}`,
+      id: uid('prod'),
       createdAt: new Date().toISOString()
     };
+
+    // Affichage immédiat, puis écriture en base ; annulation si la base refuse (quota, droits...)
     setProducts((prev) => [newProduct, ...prev]);
+    insertProductDb(newProduct).then((res) => {
+      if (!res.ok) {
+        setProducts((prev) => prev.filter((p) => p.id !== newProduct.id));
+        showToast(`Produit non enregistré : ${res.error}`);
+      }
+    });
+
     addAuditLog('PRODUCT_CREATED', newProduct.id, `Produit ajouté: "${newProduct.name}" (${formatFCFA(newProduct.price)})`);
     showToast(`Produit "${newProduct.name}" ajouté avec succès.`);
     return { success: true };
@@ -974,9 +1001,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
+    const previous = target;
     setProducts((prev) =>
       prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
     );
+    updateProductDb(id, updates).then((res) => {
+      if (!res.ok) {
+        if (previous) setProducts((prev) => prev.map((p) => (p.id === id ? previous : p)));
+        showToast(`Modification refusée : ${res.error}`);
+      }
+    });
     addAuditLog('PRODUCT_UPDATED', id, `Mise à jour des informations du produit ${id}`);
     showToast('Produit mis à jour.');
   };
@@ -984,64 +1018,103 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteProduct = (id: string) => {
     const target = products.find((p) => p.id === id);
     setProducts((prev) => prev.filter((p) => p.id !== id));
+    deleteProductDb(id).then((res) => {
+      if (!res.ok) {
+        if (target) setProducts((prev) => [target, ...prev]);
+        showToast(`Suppression refusée : ${res.error}`);
+      }
+    });
     addAuditLog('PRODUCT_DELETED', id, `Suppression du produit: "${target?.name || id}"`, 'warning');
     showToast('Produit supprimé du catalogue.');
   };
 
   const updateStoreProfile = (storeId: string, updates: Partial<Store>) => {
+    const previous = stores.find((s) => s.id === storeId);
     setStores((prev) =>
       prev.map((s) => (s.id === storeId ? { ...s, ...updates } : s))
     );
+    updateStoreRowDb(storeId, storeToRow(updates)).then((res) => {
+      if (!res.ok) {
+        if (previous) setStores((prev) => prev.map((s) => (s.id === storeId ? previous : s)));
+        showToast(`Modification refusée : ${res.error}`);
+      }
+    });
     addAuditLog('STORE_UPDATED', storeId, `Modification des coordonnées de la boutique`);
     showToast('Paramètres de la boutique enregistrés.');
   };
 
   // Founding Stores Manager (Top 5 Pinned Stores)
   const updateFoundingStore = (storeId: string, isFounding: boolean, order?: number) => {
+    const current = stores.find((s) => s.id === storeId);
+    const rank = order !== undefined ? order : current?.foundingOrder || 1;
+    const badge = isFounding ? `Boutique Fondatrice #${order || 1}` : undefined;
+
     setStores((prev) =>
-      prev.map((s) => {
-        if (s.id === storeId) {
-          return {
-            ...s,
-            isFoundingStore: isFounding,
-            foundingOrder: order !== undefined ? order : s.foundingOrder || 1,
-            promotionBadge: isFounding ? `Boutique Fondatrice #${order || 1}` : undefined
-          };
-        }
-        return s;
-      })
+      prev.map((s) =>
+        s.id === storeId
+          ? { ...s, isFoundingStore: isFounding, foundingOrder: rank, promotionBadge: badge }
+          : s
+      )
     );
+    updateStoreRowDb(storeId, {
+      is_founding_store: isFounding,
+      founding_order: rank,
+      promotion_badge: badge ?? null
+    }).then((res) => {
+      if (!res.ok) showToast(`Mise en avant non enregistrée : ${res.error}`);
+    });
     addAuditLog('ADMIN_FOUNDING_STORE_UPDATED', storeId, `Boutique fondatrice mise à jour: ${isFounding ? `Ordre #${order}` : 'Retirée'}`);
     showToast('Mise en avant des boutiques fondatrices mise à jour.');
   };
 
   // VIP Promoted Stores Manager
   const updateVipPromotion = (storeId: string, isPromoted: boolean, order?: number, badge?: string) => {
+    const current = stores.find((s) => s.id === storeId);
+    const rank = order !== undefined ? order : current?.vipPromotionOrder || 1;
+    const nextBadge = badge || (isPromoted ? (current?.promotionBadge || 'Boutique VIP à l’Honneur') : undefined);
+
     setStores((prev) =>
-      prev.map((s) => {
-        if (s.id === storeId) {
-          return {
-            ...s,
-            isVipPromoted: isPromoted,
-            vipPromotionOrder: order !== undefined ? order : s.vipPromotionOrder || 1,
-            promotionBadge: badge || (isPromoted ? (s.promotionBadge || 'Boutique VIP à l’Honneur') : undefined)
-          };
-        }
-        return s;
-      })
+      prev.map((s) =>
+        s.id === storeId
+          ? { ...s, isVipPromoted: isPromoted, vipPromotionOrder: rank, promotionBadge: nextBadge }
+          : s
+      )
     );
+    updateStoreRowDb(storeId, {
+      is_vip_promoted: isPromoted,
+      vip_promotion_order: rank,
+      promotion_badge: nextBadge ?? null
+    }).then((res) => {
+      if (!res.ok) showToast(`Promotion VIP non enregistrée : ${res.error}`);
+    });
     addAuditLog('ADMIN_VIP_PROMOTION_UPDATED', storeId, `Promotion VIP: ${isPromoted ? `Active (Rang #${order || 1})` : 'Désactivée'}`);
     showToast('Visibilité VIP mise à jour.');
   };
 
-  // Export full JSON backup before any destructive or purge operations
+  // Changement de formule d'une boutique : réservé au Super Admin (appliqué aussi par la RLS)
+  const setStorePlan = async (storeId: string, planId: PlanTierId): Promise<{ success: boolean; message: string }> => {
+    if (currentUser.role !== 'super_admin') {
+      return { success: false, message: 'Action réservée au Super Admin.' };
+    }
+    const res = await updateStoreRowDb(storeId, { plan_id: planId });
+    if (!res.ok) {
+      showToast(`Changement de formule refusé : ${res.error}`);
+      return { success: false, message: res.error || 'Erreur' };
+    }
+    setStores((prev) => prev.map((s) => (s.id === storeId ? { ...s, planId } : s)));
+    addAuditLog('ADMIN_STORE_PLAN_CHANGED', storeId, `Formule de la boutique ${storeId} fixée sur "${planId}"`, 'warning');
+    showToast('Formule de la boutique mise à jour.');
+    return { success: true, message: 'Formule mise à jour.' };
+  };
+
+  // Export de sécurité des données actuellement chargées
   const exportPlatformBackup = () => {
     const backupSnapshot = {
-      version: '2.0.0',
+      version: '3.0.0',
       exportedAt: new Date().toISOString(),
       platform: 'Boutika Sénégal',
-      databaseType: 'PostgreSQL / Supabase Schema Snapshot',
-      coverageNotice: 'Sauvegarde intégrale des entités applicatives Boutika (boutiques, produits, variantes, commandes, abonnements, tickets support, missions Kimsi et journaux d’audit). Pour les tables cryptées internes auth.users et triggers PL/pgSQL natifs de Supabase, utiliser en complément pg_dump.',
+      databaseType: 'PostgreSQL / Supabase (export des données visibles par ce compte)',
+      coverageNotice: 'Export JSON des données chargées pour ce compte. Pour une sauvegarde complète de la base (dont auth.users), utilisez les sauvegardes Supabase (Database > Backups) ou pg_dump.',
       data: {
         stores,
         products,
@@ -1062,104 +1135,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     link.download = `boutika-platform-backup-${new Date().toISOString().slice(0, 10)}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    addAuditLog('PLATFORM_BACKUP_DOWNLOADED', 'system', 'Sauvegarde intégrale des données téléchargée par le Super Admin');
-    showToast('Sauvegarde de sécurité générée et téléchargée.');
+    addAuditLog('PLATFORM_BACKUP_DOWNLOADED', 'system', 'Export JSON des données téléchargé par le Super Admin');
+    showToast('Export de sécurité généré et téléchargé.');
   };
 
-  // Restore backup safely with schema validation
-  const restorePlatformBackup = (jsonContent: string): { success: boolean; message: string; restoredCounts?: Record<string, number> } => {
-    try {
-      const parsed = JSON.parse(jsonContent);
-      if (!parsed || !parsed.data) {
-        return { success: false, message: 'Format de sauvegarde invalide : conteneur "data" absent.' };
-      }
-      const data = parsed.data;
-
-      if (!Array.isArray(data.stores) || !Array.isArray(data.products)) {
-        return { success: false, message: 'Format invalide : collections "stores" ou "products" manquantes.' };
-      }
-
-      setStores(data.stores);
-      setProducts(data.products);
-      if (Array.isArray(data.orders)) setOrders(data.orders);
-      if (Array.isArray(data.subscriptionRecords)) setSubscriptionRecords(data.subscriptionRecords);
-      if (Array.isArray(data.contactMessages)) setContactMessages(data.contactMessages);
-      if (Array.isArray(data.auditLogs)) setAuditLogs(data.auditLogs);
-      if (Array.isArray(data.plans)) setPlans(data.plans);
-      if (Array.isArray(data.kimsiMissions)) setKimsiMissions(data.kimsiMissions);
-
-      localStorage.setItem('boutika_stores', JSON.stringify(data.stores));
-      localStorage.setItem('boutika_products', JSON.stringify(data.products));
-      if (Array.isArray(data.orders)) localStorage.setItem('boutika_orders', JSON.stringify(data.orders));
-      if (Array.isArray(data.subscriptionRecords)) localStorage.setItem('boutika_subs', JSON.stringify(data.subscriptionRecords));
-      if (Array.isArray(data.contactMessages)) localStorage.setItem('boutika_contacts', JSON.stringify(data.contactMessages));
-      if (Array.isArray(data.auditLogs)) localStorage.setItem('boutika_audit', JSON.stringify(data.auditLogs));
-      if (Array.isArray(data.kimsiMissions)) localStorage.setItem('boutika_kimsi_missions', JSON.stringify(data.kimsiMissions));
-
-      addAuditLog(
-        'PLATFORM_BACKUP_RESTORED',
-        'system',
-        `Restauration complète exécutée : ${data.stores.length} boutiques, ${data.products.length} produits, ${data.orders?.length || 0} commandes restaurées.`,
-        'warning'
-      );
-
-      showToast(`Sauvegarde restaurée (${data.stores.length} boutiques, ${data.products.length} produits).`);
-      return {
-        success: true,
-        message: 'Sauvegarde restaurée avec succès.',
-        restoredCounts: {
-          stores: data.stores.length,
-          products: data.products.length,
-          orders: data.orders?.length || 0,
-          subscriptions: data.subscriptionRecords?.length || 0,
-          auditLogs: data.auditLogs?.length || 0
-        }
-      };
-    } catch (e: any) {
-      return { success: false, message: `Erreur lors de la lecture du fichier : ${e?.message || 'JSON invalide'}` };
-    }
+  // La restauration depuis un fichier est désactivée : les données vivent en base.
+  const restorePlatformBackup = (_jsonContent: string): { success: boolean; message: string; restoredCounts?: Record<string, number> } => {
+    return {
+      success: false,
+      message: 'Restauration désactivée : les données sont dans Supabase. Utilisez Database > Backups dans Supabase pour restaurer.'
+    };
   };
 
-  // Purge test / demonstration accounts safely
+  // Plus aucune donnée de démonstration n'est chargée par l'application.
+  // Le nettoyage des comptes de test en base se fait avec supabase/scripts/cleanup_test_data.sql
   const purgeDemoData = (): { success: boolean; message: string; purgedCounts: Record<string, number> } => {
-    // Demo store identifiers identified by explicit criteria
-    const demoStoreIds = ['store-keur-thiouraye', 'store-dakar-tech', 'store-saveurs-baobab', 'store-bijoux-goree'];
-    const demoStores = stores.filter((s) => demoStoreIds.includes(s.id));
-    const storesCount = demoStores.length;
-
-    // Remaining stores
-    const keptStores = stores.filter((s) => !demoStoreIds.includes(s.id));
-    const keptProducts = products.filter((p) => !demoStoreIds.includes(p.storeId));
-    const keptOrders = orders.filter((o) => !demoStoreIds.includes(o.storeId));
-
-    setStores(keptStores);
-    setProducts(keptProducts);
-    setOrders(keptOrders);
-
-    localStorage.setItem('boutika_stores', JSON.stringify(keptStores));
-    localStorage.setItem('boutika_products', JSON.stringify(keptProducts));
-    localStorage.setItem('boutika_orders', JSON.stringify(keptOrders));
-
-    addAuditLog('DEMO_DATA_PURGED', 'admin_console', `Nettoyage sécurisé effectué: ${storesCount} boutiques de test archivées après audit.`);
-    showToast(`Nettoyage des comptes de test terminé (${storesCount} boutiques retirées).`);
-
+    showToast('Aucune donnée de démonstration n’est chargée. Pour supprimer les comptes de test, utilisez le script SQL fourni.');
     return {
       success: true,
-      message: `${storesCount} comptes et boutiques de démonstration nettoyés.`,
-      purgedCounts: { stores: storesCount }
+      message: 'Aucune donnée de démonstration locale. Nettoyage des comptes de test : script SQL cleanup_test_data.sql.',
+      purgedCounts: { stores: 0 }
     };
   };
 
   const createOrder = (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt'>): Order => {
+    const now = new Date();
     const newOrder: Order = {
       ...orderData,
-      id: `ord-${Date.now()}`,
-      orderNumber: `BK-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(100 + Math.random() * 900)}`,
-      createdAt: new Date().toISOString()
+      id: uid('ord'),
+      orderNumber: `BK-${now.getFullYear().toString().slice(-2)}${(now.getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(10000 + Math.random() * 90000)}`,
+      createdAt: now.toISOString()
     };
+
+    // Un visiteur ne relit pas les commandes (RLS) : on ne garde la commande en mémoire que pour un compte connecté
     setOrders((prev) => [newOrder, ...prev]);
 
-    // Automatically decrement product / variant stocks
+    // Mise à jour immédiate de l'affichage du stock (la base le décrémente via un trigger)
     orderData.items.forEach((item) => {
       setProducts((prevProds) =>
         prevProds.map((p) => {
@@ -1178,14 +1189,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     });
 
+    insertOrderDb(newOrder).then((res) => {
+      if (!res.ok) {
+        setOrders((prev) => prev.filter((o) => o.id !== newOrder.id));
+        showToast('La commande n’a pas pu être enregistrée. Contactez la boutique directement sur WhatsApp.');
+        console.warn('[db] insertOrder:', res.error);
+      }
+    });
+
     addAuditLog('ORDER_PLACED', newOrder.id, `Nouvelle commande reçue: ${newOrder.orderNumber} (${formatFCFA(newOrder.total)})`);
     return newOrder;
   };
 
   const updateOrderStatus = (orderId: string, status: OrderStatus, notes?: string) => {
+    const previous = orders.find((o) => o.id === orderId);
     setOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status, notes: notes || o.notes } : o))
     );
+    updateOrderDb(orderId, notes ? { status, notes } : { status }).then((res) => {
+      if (!res.ok) {
+        if (previous) setOrders((prev) => prev.map((o) => (o.id === orderId ? previous : o)));
+        showToast(`Statut non enregistré : ${res.error}`);
+      }
+    });
     addAuditLog('ORDER_STATUS_CHANGED', orderId, `Statut commande modifié -> ${status.toUpperCase()}`);
     showToast(`Statut de la commande mis à jour: ${status}`);
   };
@@ -1236,53 +1262,85 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Formule d’abonnement mise à jour.');
   };
 
+  // Le vendeur ne peut plus s'attribuer une formule lui-même : il envoie une DEMANDE,
+  // activée ensuite par le Super Admin (le paiement réel Wave/Orange Money arrive au lot 2).
   const simulateServerPaymentUpgrade = async (
     planId: PlanTierId,
     gateway: 'Wave' | 'Orange Money' | 'Carte Bancaire'
   ): Promise<{ success: boolean; message: string }> => {
     const targetPlan = plans.find((p) => p.id === planId) || plans[1];
+    if (!activeStore.id) {
+      return { success: false, message: 'Aucune boutique active.' };
+    }
 
-    const txRef = `${gateway.slice(0, 4).toUpperCase()}-SN-TX-${Math.floor(100000 + Math.random() * 900000)}`;
-    
-    // Update store plan & clear trial expiration
-    setStores((prev) =>
-      prev.map((s) => (s.id === activeStoreId ? { ...s, planId, trialExpired: false } : s))
-    );
-
+    const txRef = `DEMANDE-${gateway.slice(0, 4).toUpperCase()}-${Math.floor(100000 + Math.random() * 900000)}`;
     const newRecord: SubscriptionRecord = {
-      id: `sub-rec-${Date.now()}`,
-      storeId: activeStoreId,
+      id: uid('sub'),
+      storeId: activeStore.id,
       storeName: activeStore.name,
       planId,
       planName: targetPlan.name,
       amount: targetPlan.priceMonthly,
       currency: 'XOF',
-      status: 'active',
+      status: 'en_attente_validation',
       paymentGateway: gateway,
       transactionRef: txRef,
       validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString()
     };
 
-    setSubscriptionRecords((prev) => [newRecord, ...prev]);
+    const res = await insertSubscriptionDb(newRecord);
+    if (!res.ok) {
+      return { success: false, message: `Demande non enregistrée : ${res.error}` };
+    }
 
+    setSubscriptionRecords((prev) => [newRecord, ...prev]);
     addAuditLog(
-      'SUBSCRIPTION_UPGRADED_SERVER_VERIFIED',
-      activeStoreId,
-      `Passage validé côté serveur à "${targetPlan.name}" (${formatFCFA(targetPlan.priceMonthly)}) via ${gateway}. Réf: ${txRef}. Signature webhook vérifiée.`,
+      'SUBSCRIPTION_REQUESTED',
+      activeStore.id,
+      `Demande de passage à "${targetPlan.name}" (${formatFCFA(targetPlan.priceMonthly)}) via ${gateway}. Réf: ${txRef}. En attente de validation.`,
       'info'
     );
 
     return {
       success: true,
-      message: `Paiement vérifié avec succès côté serveur ! Votre boutique est désormais sur la formule ${targetPlan.name}.`
+      message: `Demande envoyée pour la formule ${targetPlan.name}. Elle sera activée par l’équipe Boutika dès réception de votre paiement.`
     };
+  };
+
+  // Super Admin : valide une demande d'abonnement et applique la formule à la boutique
+  const activateSubscriptionRecord = async (recordId: string): Promise<{ success: boolean; message: string }> => {
+    if (currentUser.role !== 'super_admin') {
+      return { success: false, message: 'Action réservée au Super Admin.' };
+    }
+    const record = subscriptionRecords.find((r) => r.id === recordId);
+    if (!record) return { success: false, message: 'Demande introuvable.' };
+
+    const validUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const subRes = await updateSubscriptionDb(recordId, { status: 'active', valid_until: validUntil });
+    if (!subRes.ok) {
+      showToast(`Activation refusée : ${subRes.error}`);
+      return { success: false, message: subRes.error || 'Erreur' };
+    }
+    const storeRes = await updateStoreRowDb(record.storeId, { plan_id: record.planId });
+    if (!storeRes.ok) {
+      showToast(`Formule non appliquée à la boutique : ${storeRes.error}`);
+      return { success: false, message: storeRes.error || 'Erreur' };
+    }
+
+    setSubscriptionRecords((prev) =>
+      prev.map((r) => (r.id === recordId ? { ...r, status: 'active', validUntil } : r))
+    );
+    setStores((prev) => prev.map((s) => (s.id === record.storeId ? { ...s, planId: record.planId } : s)));
+    addAuditLog('ADMIN_SUBSCRIPTION_ACTIVATED', record.storeId, `Abonnement "${record.planName}" activé pour ${record.storeName}`, 'warning');
+    showToast(`Abonnement ${record.planName} activé pour ${record.storeName}.`);
+    return { success: true, message: 'Abonnement activé.' };
   };
 
   // Support & Contact
   const submitContactMessage = (name: string, email: string, phone: string, subject: string, message: string) => {
     const newMsg: ContactMessage = {
-      id: `msg-${Date.now()}`,
+      id: uid('msg'),
       senderName: name,
       senderEmail: email,
       senderPhone: phone,
@@ -1292,6 +1350,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString()
     };
     setContactMessages((prev) => [newMsg, ...prev]);
+    insertContactDb(newMsg).then((res) => {
+      if (!res.ok) {
+        setContactMessages((prev) => prev.filter((m) => m.id !== newMsg.id));
+        showToast('Votre message n’a pas pu être envoyé. Réessayez dans un instant.');
+        console.warn('[db] insertContact:', res.error);
+      }
+    });
     addAuditLog('CONTACT_MESSAGE_RECEIVED', newMsg.id, `Nouveau message de contact de ${name} (${email})`);
     showToast('Votre message a été transmis à l’équipe Boutika.');
   };
@@ -1300,45 +1365,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setContactMessages((prev) =>
       prev.map((m) => (m.id === id ? { ...m, status } : m))
     );
+    updateContactDb(id, { status }).then((res) => {
+      if (!res.ok) showToast(`Statut non enregistré : ${res.error}`);
+    });
     showToast(`Message marqué comme ${status}.`);
   };
 
   const replyToContactMessage = (id: string, replyText: string) => {
+    const repliedAt = new Date().toISOString();
     setContactMessages((prev) =>
       prev.map((m) =>
         m.id === id
-          ? {
-              ...m,
-              status: 'traite',
-              adminReply: replyText,
-              repliedAt: new Date().toISOString()
-            }
+          ? { ...m, status: 'traite', adminReply: replyText, repliedAt }
           : m
       )
     );
+    updateContactDb(id, { status: 'traite', admin_reply: replyText, replied_at: repliedAt }).then((res) => {
+      if (!res.ok) showToast(`Réponse non enregistrée : ${res.error}`);
+    });
     addAuditLog('ADMIN_SUPPORT_REPLY', id, `Réponse envoyée au commerçant: "${replyText.slice(0, 60)}..."`);
     showToast('Réponse enregistrée et transmise au commerçant.');
   };
 
   // Kimsi AI State & Missions (Private Super Admin Agent)
   const [kimsiMissions, setKimsiMissions] = useState<KimsiMission[]>(() => {
-    const saved = localStorage.getItem('boutika_kimsi_missions');
-    if (saved) return JSON.parse(saved);
-    return [
-      {
-        id: 'mission-01',
-        title: 'Surveillance des transactions Wave/OM et alertes support',
-        targetObjective: 'Vérifier la conformité des transactions Wave/Orange Money et alerter si un ticket reste sans réponse plus de 2 heures.',
-        durationHours: 2,
-        startedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-        expiresAt: new Date(Date.now() + 90 * 60 * 1000).toISOString(),
-        status: 'active',
-        logs: [
-          { timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString(), action: 'INITIALISATION', details: 'Mission Kimsi démarrée avec périmètre restreint audit & lecture seule.' },
-          { timestamp: new Date(Date.now() - 15 * 60 * 1000).toISOString(), action: 'CHECK_TRANSACTIONS', details: 'Aucun échec critique de transaction détecté sur les 2 dernières heures.' }
-        ]
-      }
-    ];
+    try {
+      const saved = localStorage.getItem('boutika_kimsi_missions');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      /* ignore */
+    }
+    return [];
   });
 
   const [kimsiMessages, setKimsiMessages] = useState<KimsiChatMessage[]>([
@@ -1426,8 +1483,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setKimsiMessages((prev) => [...prev, userMsg]);
 
-    // Live platform summary
-    const summaryRevenue = subscriptionRecords.reduce((sum, r) => sum + r.amount, 0);
+    // Live platform summary : seuls les abonnements ACTIFS comptent dans le revenu
+    const summaryRevenue = subscriptionRecords
+      .filter((r) => r.status === 'active')
+      .reduce((sum, r) => sum + r.amount, 0);
     const recentLogs = auditLogs.slice(0, 5).map((l) => `${l.action}: ${l.details}`);
     const newTickets = contactMessages.filter((m) => m.status === 'nouveau').length;
 
@@ -1471,6 +1530,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateUserPassword,
         signOutUser,
         createStoreForVendor,
+        refreshData,
 
         // Authentication State
         isAuthenticated,
@@ -1497,6 +1557,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateStoreProfile,
         updateFoundingStore,
         updateVipPromotion,
+        setStorePlan,
         checkCanAddProduct,
         checkStoreTrialStatus,
         purgeDemoData,
@@ -1517,6 +1578,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updatePlan,
         subscriptionRecords,
         simulateServerPaymentUpgrade,
+        activateSubscriptionRecord,
         contactMessages,
         submitContactMessage,
         updateMessageStatus,
