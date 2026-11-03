@@ -178,13 +178,17 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Identifiant unique sans collision (crypto.randomUUID quand disponible)
-const uid = (prefix: string): string => {
-  const random =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-  return `${prefix}-${random}`;
+// Identifiant unique de type UUID v4. La base utilise des colonnes uuid (produits, commandes...) :
+// un identifiant du type "prod-xxxx" serait refusé. Le paramètre est conservé pour compatibilité.
+const uid = (_prefix?: string): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 };
 
 // Boutique "vide" utilisée tant qu'aucune boutique réelle n'est chargée (évite les plantages)
@@ -357,7 +361,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (insertedProfile) {
             resolvedUser = {
               id: insertedProfile.id,
-              email: insertedProfile.email,
+              email: insertedProfile.email || userEmail,
               fullName: insertedProfile.full_name,
               phone: insertedProfile.phone || '',
               role: insertedProfile.role === 'super_admin' ? 'super_admin' : 'vendor',
@@ -392,7 +396,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         resolvedUser = {
           id: profile.id,
-          email: profile.email,
+          // La table profiles n'a pas de colonne e-mail : on prend celui du compte de connexion
+          email: profile.email || userEmail,
           fullName: profile.full_name,
           phone: profile.phone || '',
           role: profile.role === 'super_admin' ? 'super_admin' : 'vendor',
