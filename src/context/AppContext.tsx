@@ -17,9 +17,10 @@ import {
   KimsiMission,
   KimsiChatMessage
 } from '../types';
-// LOT 1 : seules la grille des formules et le profil "visiteur" restent locaux.
-// Boutiques, produits, commandes, abonnements, messages et audit viennent de Supabase.
-import { INITIAL_PLANS, INITIAL_USERS } from '../data/mockData';
+// Seul le profil "visiteur" reste local. Boutiques, produits, commandes, abonnements,
+// messages et audit viennent de Supabase. Les formules viennent d'une source unique.
+import { INITIAL_USERS } from '../data/mockData';
+import { INITIAL_PLANS, TRIAL_DAYS } from '../data/plans';
 import { 
   supabase, 
   isSupabaseConfigured, 
@@ -74,12 +75,21 @@ export type CurrentView =
   | 'reset-password'
   | 'auth-callback';
 
+// Informations de boutique saisies à l'inscription (transmises avec le compte, appliquées à la 1re connexion)
+export interface StoreSignupExtra {
+  description?: string;
+  businessType?: string;
+  city?: string;
+  address?: string;
+  planId?: PlanTierId;
+}
+
 interface AppContextType {
   // Supabase Backend Status & Operations
   isSupabaseConfigured: boolean;
   supabaseConnectionStatus: SupabaseConnectionStatus | null;
   testConnection: () => Promise<SupabaseConnectionStatus>;
-  signUpWithSupabase: (email: string, password: string, fullName: string, phone: string, storeName?: string) => Promise<{ success: boolean; requiresEmailConfirmation: boolean; message: string; email?: string }>;
+  signUpWithSupabase: (email: string, password: string, fullName: string, phone: string, storeName?: string, storeExtra?: StoreSignupExtra) => Promise<{ success: boolean; requiresEmailConfirmation: boolean; message: string; email?: string }>;
   signInWithSupabase: (email: string, password: string) => Promise<{ success: boolean; message: string; authStatus?: AuthStatus; role?: UserRole }>;
   resetPasswordWithSupabase: (email: string) => Promise<{ success: boolean; message: string }>;
   updateUserPassword: (newPassword: string) => Promise<{ success: boolean; message: string }>;
@@ -117,7 +127,7 @@ interface AppContextType {
   updateVipPromotion: (storeId: string, isPromoted: boolean, order?: number, badge?: string) => void;
   setStorePlan: (storeId: string, planId: PlanTierId) => Promise<{ success: boolean; message: string }>;
   checkCanAddProduct: (storeId: string) => { allowed: boolean; reason?: string; maxAllowed: number; currentCount: number };
-  checkStoreTrialStatus: (store: Store) => { isExpired: boolean; daysRemaining: number; trialEndDate: string; isActive: boolean };
+  checkStoreTrialStatus: (store: Store) => { isExpired: boolean; daysRemaining: number; trialEndDate: string; isActive: boolean; isPaid?: boolean };
   purgeDemoData: () => { success: boolean; message: string; purgedCounts: Record<string, number> };
   exportPlatformBackup: () => void;
   restorePlatformBackup: (jsonContent: string) => { success: boolean; message: string; restoredCounts?: Record<string, number> };
@@ -191,6 +201,8 @@ const uid = (_prefix?: string): string => {
   });
 };
 
+const PAID_PLAN_IDS = ['standard', 'premium', 'vip'];
+
 // Boutique "vide" utilisée tant qu'aucune boutique réelle n'est chargée (évite les plantages)
 const EMPTY_STORE: Store = {
   id: '',
@@ -208,7 +220,7 @@ const EMPTY_STORE: Store = {
   categories: DEFAULT_CATEGORIES,
   deliveryZones: DEFAULT_DELIVERY_ZONES,
   status: 'active',
-  planId: 'decouverte',
+  planId: 'standard',
   createdAt: new Date(0).toISOString()
 };
 
@@ -228,10 +240,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [contactMessages, setContactMessages] = useState<ContactMessage[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
-  // La grille tarifaire est une configuration (pas une donnée métier) : conservée localement
+  // La grille tarifaire est une configuration. Clé "v2" : les anciens prix enregistrés dans le
+  // navigateur (0 / 7 500 / 19 000 FCFA) sont ignorés.
   const [plans, setPlans] = useState<SubscriptionPlan[]>(() => {
     try {
-      const saved = localStorage.getItem('boutika_plans');
+      const saved = localStorage.getItem('boutika_plans_v2');
       if (saved) return JSON.parse(saved);
     } catch {
       /* ignore */
@@ -421,8 +434,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .eq('vendor_id', userId);
 
       if (!storeRows || storeRows.length === 0) {
-        // Aucune boutique trouvée pour ce vendeur
-        // Tentative d'auto-création si les métadonnées de nom de boutique sont présentes
+        // Aucune boutique trouvée pour ce vendeur : création automatique à partir des informations
+        // saisies à l'inscription (nom, description, type de commerce, lieu, formule choisie).
+        // L'essai de 3 jours est posé par la base de données (trigger enforce_store_trial_rules).
         if (meta.store_name) {
           try {
             const rawSlug = (meta.store_slug || meta.store_name)
@@ -431,6 +445,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               .replace(/-+/g, '-')
               .replace(/^-|-$/g, '');
             const generatedSlug = `${rawSlug}-${userId.slice(0, 4)}`;
+            const chosenPlan = PAID_PLAN_IDS.includes(meta.plan_id) ? meta.plan_id : 'standard';
 
             const { data: newStore, error: createStoreErr } = await client
               .from('stores')
@@ -438,10 +453,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 vendor_id: userId,
                 name: meta.store_name,
                 slug: generatedSlug,
+                description: meta.store_description || null,
+                business_type: meta.business_type || null,
                 whatsapp_number: (meta.phone || '').replace(/[^0-9]/g, '') || '221770000000',
-                city: 'Dakar',
+                city: meta.city || 'Dakar',
+                address: meta.address || null,
                 status: 'active',
-                plan_id: 'decouverte'
+                plan_id: chosenPlan
               })
               .select()
               .single();
@@ -454,6 +472,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setSelectedStoreSlug(formattedStore.slug);
               setAuthStatus('ready');
               return { status: 'ready', user: resolvedUser, store: formattedStore };
+            }
+            if (createStoreErr) {
+              console.warn('Création boutique refusée:', createStoreErr.message);
             }
           } catch (autoCreateErr) {
             console.warn('Auto-création boutique échouée:', autoCreateErr);
@@ -617,7 +638,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           city: storeData.city || 'Dakar',
           address: storeData.address || 'Dakar',
           status: 'active',
-          plan_id: 'decouverte'
+          plan_id: 'standard'
         })
         .select()
         .single();
@@ -644,7 +665,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     password: string,
     fullName: string,
     phone: string,
-    storeName?: string
+    storeName?: string,
+    storeExtra?: StoreSignupExtra
   ): Promise<{ success: boolean; requiresEmailConfirmation: boolean; message: string; email?: string }> => {
     if (!isSupabaseConfigured || !supabase) {
       return {
@@ -673,6 +695,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             phone: cleanPhone,
             store_name: storeName || 'Ma Boutique',
             store_slug: rawSlug,
+            store_description: storeExtra?.description || '',
+            business_type: storeExtra?.businessType || '',
+            city: storeExtra?.city || '',
+            address: storeExtra?.address || '',
+            plan_id: storeExtra?.planId && PAID_PLAN_IDS.includes(storeExtra.planId) ? storeExtra.planId : 'standard'
           }
         }
       });
@@ -816,7 +843,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // La grille tarifaire (configuration) reste en local
   useEffect(() => {
     try {
-      localStorage.setItem('boutika_plans', JSON.stringify(plans));
+      localStorage.setItem('boutika_plans_v2', JSON.stringify(plans));
     } catch {
       /* ignore */
     }
@@ -865,58 +892,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // 3-Day Free Trial Verification & Commercial Rules
-  // (inchangé dans le lot 1 : la règle "Standard payant + blocage" est traitée au lot 2)
+  /**
+   * Accès d'une boutique : AUCUNE formule n'est gratuite.
+   *  - une formule activée (abonnement actif non échu) donne l'accès ;
+   *  - sinon, l'essai gratuit de 3 jours (dates posées par la base) donne l'accès ;
+   *  - sinon l'accès est bloqué jusqu'à l'activation d'une formule.
+   */
   const checkStoreTrialStatus = (store: Store) => {
-    const isStandardTier = store.planId === 'standard' || store.planId === 'decouverte';
-    if (isStandardTier) {
-      return {
-        isExpired: false,
-        daysRemaining: 999,
-        trialEndDate: 'Permanente (Forfait Standard Gratuit)',
-        isActive: true,
-        isStandardFree: true
-      };
-    }
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
 
-    // 1. If store has an active paid subscription record, it supersedes trial
+    // 1. Abonnement actif
     const activeSub = subscriptionRecords.find(
-      (s) => s.storeId === store.id && s.status === 'active' && s.paymentGateway !== 'Gratuit'
+      (s) => s.storeId === store.id && s.status === 'active' && new Date(s.validUntil).getTime() > now
     );
     if (activeSub) {
       return {
         isExpired: false,
-        daysRemaining: 30,
+        daysRemaining: Math.max(0, Math.ceil((new Date(activeSub.validUntil).getTime() - now) / DAY_MS)),
         trialEndDate: activeSub.validUntil,
         isActive: true,
         isPaid: true
       };
     }
 
-    // 2. Strict trial reuse prohibition: if store has trialUsed flag, trial is permanently expired
-    if (store.trialUsed) {
-      return {
-        isExpired: true,
-        daysRemaining: 0,
-        trialEndDate: store.trialEndDate || store.createdAt,
-        isActive: false,
-        trialUsedPermanently: true
-      };
-    }
-
-    const createdTime = new Date(store.trialStartDate || store.createdAt).getTime();
-    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
-    const expiryTime = createdTime + threeDaysMs;
-    const now = Date.now();
-    const diffMs = expiryTime - now;
-    const daysRemaining = Math.max(0, Math.ceil(diffMs / (24 * 60 * 60 * 1000)));
+    // 2. Essai gratuit de 3 jours (une seule fois par vendeur, posé par la base)
+    const startMs = new Date(store.trialStartDate || store.createdAt).getTime();
+    const endMs = store.trialEndDate
+      ? new Date(store.trialEndDate).getTime()
+      : startMs + TRIAL_DAYS * DAY_MS;
+    const diffMs = endMs - now;
     const isExpired = diffMs <= 0;
 
     return {
       isExpired,
-      daysRemaining,
-      trialEndDate: new Date(expiryTime).toISOString(),
-      isActive: !isExpired
+      daysRemaining: Math.max(0, Math.ceil(diffMs / DAY_MS)),
+      trialEndDate: new Date(endMs).toISOString(),
+      isActive: !isExpired,
+      isPaid: false
     };
   };
 
@@ -925,29 +938,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const checkCanAddProduct = (storeId: string) => {
     const store = stores.find((s) => s.id === storeId) || activeStore;
     const currentCount = products.filter((p) => p.storeId === storeId).length;
-    const isStandardTier = store.planId === 'standard' || store.planId === 'decouverte';
-    
+
     let maxAllowed = 50;
     if (store.planId === 'vip' || store.planId === 'business') {
       maxAllowed = 500;
     } else if (store.planId === 'premium' || store.planId === 'pro') {
       maxAllowed = 150;
-    } else {
-      maxAllowed = 50;
     }
 
+    // Essai terminé et aucune formule active : plus d'ajout (l'accès est de toute façon bloqué)
     const trialStatus = checkStoreTrialStatus(store);
-
-    // If trial for Premium/VIP expired without subscription:
-    if (!isStandardTier && trialStatus.isExpired) {
-      if (currentCount >= 50) {
-        return {
-          allowed: false,
-          reason: `Votre période d’essai gratuit de 3 jours pour la formule ${store.planId.toUpperCase()} est terminée. Pour conserver un catalogue supérieur à 50 produits (${currentCount} actuellement), veuillez activer votre abonnement.`,
-          maxAllowed: 50,
-          currentCount
-        };
-      }
+    if (trialStatus.isExpired) {
+      return {
+        allowed: false,
+        reason: 'Votre essai gratuit est terminé. Activez une formule pour continuer à ajouter des produits.',
+        maxAllowed,
+        currentCount
+      };
     }
 
     if (currentCount >= maxAllowed) {
@@ -993,16 +1000,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const target = products.find((p) => p.id === id);
     if (target) {
       const store = stores.find((s) => s.id === target.storeId);
-      if (store) {
-        const isStandardTier = store.planId === 'standard' || store.planId === 'decouverte';
-        const trialStatus = checkStoreTrialStatus(store);
-        const storeProdCount = products.filter((p) => p.storeId === store.id).length;
-
-        // Commercial rule: Only restrict updating if trial expired on paid tier AND store exceeds the free 50 products tier
-        if (!isStandardTier && trialStatus.isExpired && storeProdCount > 50) {
-          showToast('Essai Premium/VIP expiré. Veuillez activer votre abonnement pour modifier ce catalogue étendu.');
-          return;
-        }
+      if (store && currentUser.role !== 'super_admin' && checkStoreTrialStatus(store).isExpired) {
+        showToast('Essai gratuit terminé. Activez une formule pour modifier votre catalogue.');
+        return;
       }
     }
 
@@ -1096,7 +1096,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Visibilité VIP mise à jour.');
   };
 
-  // Changement de formule d'une boutique : réservé au Super Admin (appliqué aussi par la RLS)
+  // Changement de formule par le Super Admin : applique la formule ET ouvre 30 jours d'accès
+  // (enregistré comme activation manuelle dans les abonnements).
   const setStorePlan = async (storeId: string, planId: PlanTierId): Promise<{ success: boolean; message: string }> => {
     if (currentUser.role !== 'super_admin') {
       return { success: false, message: 'Action réservée au Super Admin.' };
@@ -1106,8 +1107,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast(`Changement de formule refusé : ${res.error}`);
       return { success: false, message: res.error || 'Erreur' };
     }
+
+    const store = stores.find((s) => s.id === storeId);
+    const plan = plans.find((p) => p.id === planId);
+    const manualRecord: SubscriptionRecord = {
+      id: uid('sub'),
+      storeId,
+      storeName: store?.name || '',
+      planId,
+      planName: plan?.name || planId,
+      amount: 0,
+      currency: 'XOF',
+      status: 'active',
+      paymentGateway: 'Gratuit',
+      transactionRef: 'ACTIVATION-MANUELLE-ADMIN',
+      validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: new Date().toISOString()
+    };
+    const subRes = await insertSubscriptionDb(manualRecord);
+    if (subRes.ok) {
+      setSubscriptionRecords((prev) => [manualRecord, ...prev]);
+    }
+
     setStores((prev) => prev.map((s) => (s.id === storeId ? { ...s, planId } : s)));
-    addAuditLog('ADMIN_STORE_PLAN_CHANGED', storeId, `Formule de la boutique ${storeId} fixée sur "${planId}"`, 'warning');
+    addAuditLog('ADMIN_STORE_PLAN_CHANGED', storeId, `Formule de la boutique ${storeId} fixée sur "${planId}" (30 jours d'accès)`, 'warning');
     showToast('Formule de la boutique mise à jour.');
     return { success: true, message: 'Formule mise à jour.' };
   };
@@ -1267,8 +1290,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Formule d’abonnement mise à jour.');
   };
 
-  // Le vendeur ne peut plus s'attribuer une formule lui-même : il envoie une DEMANDE,
-  // activée ensuite par le Super Admin (le paiement réel Wave/Orange Money arrive au lot 2).
+  // Le vendeur ne peut pas s'attribuer une formule lui-même : il envoie une DEMANDE,
+  // activée ensuite par le Super Admin (le paiement réel Wave/Orange Money viendra ensuite).
   const simulateServerPaymentUpgrade = async (
     planId: PlanTierId,
     gateway: 'Wave' | 'Orange Money' | 'Carte Bancaire'
