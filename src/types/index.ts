@@ -109,6 +109,7 @@ export interface Store {
   email: string;
   address: string;
   city: string;
+  businessType?: string; // type de commerce : mode, pâtisserie, beauté...
   logoUrl: string;
   bannerUrl: string;
   categories: string[];
@@ -223,4 +224,3 @@ export interface KimsiChatMessage {
   insights?: string[];
   suggestedActions?: { label: string; actionType: string; payload?: any }[];
 }
-
