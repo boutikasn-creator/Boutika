@@ -3,6 +3,7 @@ import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
 import { Toast } from './components/common/Toast';
+import { VendorAccessGate } from './components/vendor/VendorAccessGate';
 import { AuthModal } from './pages/public/AuthModal';
 import { HomePage } from './pages/public/HomePage';
 import { AboutPage } from './pages/public/AboutPage';
@@ -48,7 +49,11 @@ const AppContent: React.FC = () => {
         {currentView === 'legal-privacy' && <LegalPrivacyPage />}
         {currentView === 'legal-terms' && <LegalTermsPage />}
         {currentView === 'public-store' && <PublicStorePage />}
-        {currentView === 'vendor-dashboard' && <VendorDashboard />}
+        {currentView === 'vendor-dashboard' && (
+          <VendorAccessGate>
+            <VendorDashboard />
+          </VendorAccessGate>
+        )}
         {currentView === 'admin-dashboard' && <AdminDashboard />}
         {currentView === 'architecture' && <ArchitecturePage />}
         {currentView === 'register' && <RegisterPage />}
