@@ -7,6 +7,9 @@ import type { SubscriptionPlan } from '../types';
  *
  * AUCUNE formule n'est gratuite. Seul l'essai de 3 jours (une seule fois par vendeur) est offert.
  * Tarif annuel = 10 mois payés sur 12 (2 mois offerts).
+ *
+ * Les fonctionnalités pas encore développées portent la mention "(bientôt disponible)" :
+ * elles sont annoncées honnêtement, partout où la liste est affichée.
  */
 export const TRIAL_DAYS = 3;
 
@@ -50,7 +53,7 @@ export const INITIAL_PLANS: SubscriptionPlan[] = [
       'Logo et informations de votre boutique',
       'Lien de boutique à copier et partager',
       'Commande du client envoyée sur votre WhatsApp',
-      'Agent IA : publie le lien de votre boutique toutes les 24 h sur 1 réseau social',
+      'Agent IA : publie le lien de votre boutique toutes les 24 h sur 1 réseau social (bientôt disponible)',
       '0 % de commission sur vos ventes'
     ],
     commissionRate: 0,
@@ -65,7 +68,7 @@ export const INITIAL_PLANS: SubscriptionPlan[] = [
   {
     id: 'premium',
     name: 'Premium',
-    tagline: 'Pour développer vos ventes avec le panier complet et l’IA comptable',
+    tagline: 'Pour développer vos ventes avec le panier complet et le bilan de vos ventes',
     priceMonthly: 12500,
     priceYearly: 125000,
     maxProducts: 150,
@@ -73,11 +76,11 @@ export const INITIAL_PLANS: SubscriptionPlan[] = [
     features: [
       'Jusqu’à 150 produits',
       'Logo et informations de votre boutique',
-      'Boutons de partage vers Facebook, Instagram, WhatsApp...',
-      'Agent IA : publie le lien de votre boutique toutes les 24 h sur 2 réseaux sociaux',
-      'Agent IA comptable : total des ventes, ruptures de stock, produits les plus et les moins vendus',
-      'Commande complète : paiement, livraison et informations du client',
-      'Notification de chaque nouvelle commande',
+      'Boutons de partage vers vos réseaux sociaux (WhatsApp, Facebook, Instagram...)',
+      'Bilan de vos ventes : total des ventes, ruptures de stock, produits les plus et les moins vendus',
+      'Commande complète : choix du paiement, de la livraison et informations du client',
+      'Notification de chaque nouvelle commande dans votre tableau de bord',
+      'Agent IA : publie le lien de votre boutique toutes les 24 h sur 2 réseaux sociaux (bientôt disponible)',
       '0 % de commission sur vos ventes'
     ],
     commissionRate: 0,
@@ -92,20 +95,20 @@ export const INITIAL_PLANS: SubscriptionPlan[] = [
   {
     id: 'vip',
     name: 'VIP',
-    tagline: 'L’offre complète : votre agent IA gère votre boutique et vous fait de la publicité',
+    tagline: 'L’offre complète : conseils de vente, IA et mise en avant auprès des acheteurs',
     priceMonthly: 25500,
     priceYearly: 255000,
     maxProducts: 500,
     features: [
       'Jusqu’à 500 produits',
       'Boutons de partage vers tous vos réseaux sociaux',
-      'Agent IA : publie le lien de votre boutique toutes les 24 h sur tous vos réseaux',
-      'Agent IA comptable et stratégies de vente personnalisées',
-      'Agent IA qui gère votre tableau de bord et vos produits',
-      'Scan d’un produit : l’IA le décrit et l’ajoute pour vous',
-      'Discussion directe avec votre agent IA',
+      'Bilan de vos ventes et conseils de vente personnalisés',
+      'Description, tailles et prix suggérés par l’IA quand vous ajoutez un produit',
       'Mise en avant de votre boutique auprès des acheteurs (Marketplace)',
-      'Commande complète et notifications sur tous vos canaux',
+      'Commande complète et notifications de commande',
+      'Agent IA : publie le lien de votre boutique toutes les 24 h sur tous vos réseaux (bientôt disponible)',
+      'Scan d’un produit : l’IA le décrit et l’ajoute pour vous (bientôt disponible)',
+      'Discussion directe avec votre agent IA, qui gère votre tableau de bord (bientôt disponible)',
       '0 % de commission sur vos ventes'
     ],
     commissionRate: 0,
