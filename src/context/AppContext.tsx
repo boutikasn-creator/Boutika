@@ -240,17 +240,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [contactMessages, setContactMessages] = useState<ContactMessage[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
-  // La grille tarifaire est une configuration. Clé "v2" : les anciens prix enregistrés dans le
-  // navigateur (0 / 7 500 / 19 000 FCFA) sont ignorés.
-  const [plans, setPlans] = useState<SubscriptionPlan[]>(() => {
-    try {
-      const saved = localStorage.getItem('boutika_plans_v2');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      /* ignore */
-    }
-    return INITIAL_PLANS;
-  });
+  // La grille tarifaire vient UNIQUEMENT du code (src/data/plans.ts) : plus de copie enregistrée
+  // dans le navigateur, qui pouvait afficher d'anciens prix ou d'anciens textes.
+  const [plans, setPlans] = useState<SubscriptionPlan[]>(INITIAL_PLANS);
 
   // Cart for Public Store
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -840,15 +832,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Vous avez été déconnecté avec succès.');
   };
 
-  // La grille tarifaire (configuration) reste en local
-  useEffect(() => {
-    try {
-      localStorage.setItem('boutika_plans_v2', JSON.stringify(plans));
-    } catch {
-      /* ignore */
-    }
-  }, [plans]);
-
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -1283,11 +1266,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const cartTotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Plans Management
+  // Plans Management (modification valable pour la session en cours ; les tarifs officiels sont dans src/data/plans.ts)
   const updatePlan = (id: string, updates: Partial<SubscriptionPlan>) => {
     setPlans((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
     addAuditLog('PLAN_UPDATED', id, `Mise à jour de la grille tarifaire de la formule ${id}`, 'warning');
-    showToast('Formule d’abonnement mise à jour.');
+    showToast('Formule modifiée pour cette session. Les tarifs officiels se changent dans le code (src/data/plans.ts).');
   };
 
   // Le vendeur ne peut pas s'attribuer une formule lui-même : il envoie une DEMANDE,
