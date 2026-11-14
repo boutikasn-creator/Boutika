@@ -24,6 +24,7 @@ import {
  *   1. Votre compte      (nom, WhatsApp, e-mail, mot de passe)
  *   2. Votre boutique    (nom, description, type de commerce, ville, adresse)
  *   3. Votre formule     (Standard / Premium / VIP) -> démarre l'essai gratuit de 3 jours
+ * La formule n'est PAS présélectionnée : le vendeur doit cliquer sur celle qu'il veut.
  * Le logo est ajouté à la première connexion (après confirmation de l'e-mail), car l'envoi d'une image
  * demande un compte connecté.
  */
@@ -53,8 +54,8 @@ export const RegisterPage: React.FC = () => {
   const [city, setCity] = useState('Dakar');
   const [address, setAddress] = useState('');
 
-  // Étape 3
-  const [planId, setPlanId] = useState<PlanTierId>('premium');
+  // Étape 3 : aucune formule n'est présélectionnée
+  const [planId, setPlanId] = useState<PlanTierId | null>(null);
   const [acceptTerms, setAcceptTerms] = useState(false);
 
   // UI
@@ -68,6 +69,8 @@ export const RegisterPage: React.FC = () => {
   const slugPreview = storeName
     ? storeName.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
     : 'votre-boutique';
+
+  const chosenPlan = plans.find((p) => p.id === planId);
 
   const validateStep1 = (): boolean => {
     if (!fullName.trim()) { setErrorMessage('Veuillez indiquer votre nom complet.'); return false; }
@@ -110,6 +113,10 @@ export const RegisterPage: React.FC = () => {
 
     if (!validateStep1()) { setStep(1); return; }
     if (!validateStep2()) { setStep(2); return; }
+    if (!planId) {
+      setErrorMessage('Veuillez choisir votre formule (Standard, Premium ou VIP) en cliquant sur l’une des trois cartes.');
+      return;
+    }
     if (!acceptTerms) {
       setErrorMessage('Vous devez accepter les conditions d’utilisation et la politique de confidentialité.');
       return;
@@ -144,7 +151,6 @@ export const RegisterPage: React.FC = () => {
 
   // Écran : confirmation de l'e-mail à faire
   if (emailConfirmationRequired) {
-    const chosen = plans.find((p) => p.id === planId);
     return (
       <div className="min-h-screen bg-stone-100/60 py-12 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
         <div className="max-w-md w-full bg-white rounded-3xl p-8 sm:p-10 shadow-xl border border-stone-200 text-center space-y-6">
@@ -170,7 +176,7 @@ export const RegisterPage: React.FC = () => {
           <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 text-xs text-stone-600 text-left space-y-2 leading-relaxed">
             <p className="font-bold text-stone-800">Prochaines étapes :</p>
             <p>1. Ouvrez votre messagerie et cliquez sur le lien de confirmation.</p>
-            <p>2. Connectez-vous à Boutika : votre boutique est créée et votre essai gratuit de {TRIAL_DAYS} jours démarre{chosen ? ` avec la formule ${chosen.name}` : ''}.</p>
+            <p>2. Connectez-vous à Boutika : votre boutique est créée et votre essai gratuit de {TRIAL_DAYS} jours démarre{chosenPlan ? ` avec la formule ${chosenPlan.name}` : ''}.</p>
             <p>3. Ajoutez votre logo et vos premiers produits.</p>
             <p className="text-[11px] text-stone-400 pt-1">
               Astuce : pensez à vérifier vos courriers indésirables (spams) si vous ne le recevez pas sous 2 minutes.
@@ -410,8 +416,8 @@ export const RegisterPage: React.FC = () => {
           {step === 3 && (
             <>
               <p className="text-stone-600 text-xs leading-relaxed">
-                Choisissez votre formule. Vous profitez de <strong>{TRIAL_DAYS} jours d'essai gratuit</strong> (une seule fois),
-                puis vous activez votre formule pour garder l'accès à votre tableau de bord.
+                Cliquez sur la formule de votre choix. Vous profitez de <strong>{TRIAL_DAYS} jours d'essai gratuit</strong> (une seule fois),
+                puis vous activez cette formule, ou vous en changez, pour garder l'accès à votre tableau de bord.
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -421,7 +427,7 @@ export const RegisterPage: React.FC = () => {
                     <button
                       key={p.id}
                       type="button"
-                      onClick={() => setPlanId(p.id)}
+                      onClick={() => { setPlanId(p.id); setErrorMessage(null); }}
                       className={`relative text-left rounded-2xl border-2 p-4 transition-all ${
                         active ? 'border-amber-600 bg-amber-50/40 shadow-md' : 'border-stone-200 hover:border-stone-300'
                       }`}
@@ -452,6 +458,14 @@ export const RegisterPage: React.FC = () => {
                   );
                 })}
               </div>
+
+              <p className={`text-xs font-bold text-center rounded-xl py-2 border ${
+                chosenPlan ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : 'text-stone-500 bg-stone-50 border-stone-200'
+              }`}>
+                {chosenPlan
+                  ? `Formule choisie : ${chosenPlan.name} (${formatFCFA(chosenPlan.priceMonthly)} / mois après l'essai)`
+                  : 'Aucune formule choisie pour le moment'}
+              </p>
 
               <div className="pt-1">
                 <label className="flex items-start gap-2.5 cursor-pointer">
@@ -489,8 +503,8 @@ export const RegisterPage: React.FC = () => {
                 <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
-              <button type="submit" disabled={isSubmitting}
-                className="flex-1 py-3 px-6 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-extrabold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-sm">
+              <button type="submit" disabled={isSubmitting || !planId}
+                className="flex-1 py-3 px-6 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-extrabold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-sm">
                 {isSubmitting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
