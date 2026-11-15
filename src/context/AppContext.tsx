@@ -465,6 +465,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setAuthStatus('ready');
               return { status: 'ready', user: resolvedUser, store: formattedStore };
             }
+
+            // La connexion déclenche parfois deux synchronisations en même temps : l'autre a peut-être
+            // déjà créé la boutique (la base refuse alors le doublon). On la relit au lieu d'afficher
+            // à tort « Configurez votre boutique ».
+            const { data: existingRows } = await client
+              .from('stores')
+              .select('*')
+              .eq('vendor_id', userId);
+            if (existingRows && existingRows.length > 0) {
+              const existingStore = buildVendorStore(existingRows[0], resolvedUser);
+              await refreshData(resolvedUser.role);
+              setStores(prev => prev.some(s => s.id === existingStore.id) ? prev : [existingStore, ...prev]);
+              setActiveStoreId(existingStore.id);
+              setSelectedStoreSlug(existingStore.slug);
+              setAuthStatus('ready');
+              return { status: 'ready', user: resolvedUser, store: existingStore };
+            }
+
             if (createStoreErr) {
               console.warn('Création boutique refusée:', createStoreErr.message);
             }
@@ -678,7 +696,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .replace(/^-|-$/g, '');
 
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: email.trim().toLowerCase(),
         password,
         options: {
           emailRedirectTo: redirectUrl,
@@ -697,7 +715,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       if (error) {
+        const lower = (error.message || '').toLowerCase();
+        if (lower.includes('already') || lower.includes('registered')) {
+          return {
+            success: false,
+            requiresEmailConfirmation: false,
+            message: 'Cette adresse e-mail est déjà utilisée. Connectez-vous, ou utilisez « Mot de passe oublié » si vous ne vous en souvenez plus.'
+          };
+        }
         return { success: false, requiresEmailConfirmation: false, message: error.message };
+      }
+
+      // Supabase ne renvoie PAS d'erreur quand l'adresse existe déjà (protection contre le repérage
+      // des comptes) : il renvoie un faux succès avec une liste "identities" vide. Aucun compte n'est
+      // créé dans ce cas : on prévient clairement l'utilisateur au lieu de prétendre que c'est réussi.
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        return {
+          success: false,
+          requiresEmailConfirmation: false,
+          message: 'Cette adresse e-mail est déjà utilisée : aucun nouveau compte n’a été créé. Connectez-vous avec cette adresse, ou utilisez « Mot de passe oublié ». Pour créer une autre boutique, utilisez une autre adresse e-mail.'
+        };
       }
 
       // Si la confirmation d'email est activée dans Supabase, data.session est null

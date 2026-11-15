@@ -8,10 +8,10 @@ import { Lock, Clock, CheckCircle2, Upload, Store, LogOut, RefreshCw } from 'luc
 
 /**
  * Barrière d'accès du tableau de bord vendeur.
- *  1. Essai terminé et aucune formule active -> accès BLOQUÉ (choix et activation d'une formule).
+ *  1. Essai terminé (ou non accordé) et aucune formule active -> accès BLOQUÉ.
  *  2. Première connexion -> étape "Complétez votre boutique" (logo, description, type de commerce, lieu).
  *  3. Pendant l'essai -> bandeau "X jour(s) restant(s)" au-dessus du tableau de bord.
- * Le tableau de bord lui-même n'est pas modifié : il est simplement envelopppé par cette barrière.
+ * Le tableau de bord lui-même n'est pas modifié : il est simplement enveloppé par cette barrière.
  */
 export const VendorAccessGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const {
@@ -28,7 +28,7 @@ export const VendorAccessGate: React.FC<{ children: React.ReactNode }> = ({ chil
     showToast
   } = useApp();
 
-  // --- État : activation d'une formule ---
+  // --- État : activation d'une formule (par défaut : la formule choisie à l'inscription) ---
   const [selectedPlan, setSelectedPlan] = useState<PlanTierId>('premium');
   const [gateway, setGateway] = useState<'Wave' | 'Orange Money'>('Wave');
   const [busy, setBusy] = useState(false);
@@ -49,6 +49,8 @@ export const VendorAccessGate: React.FC<{ children: React.ReactNode }> = ({ chil
     setCity(activeStore.city || '');
     setAddress(activeStore.address || '');
     setLogoUrl(activeStore.logoUrl === DEFAULT_LOGO_URL ? '' : activeStore.logoUrl);
+    // La formule présélectionnée sur l'écran de blocage est celle de la boutique
+    setSelectedPlan(activeStore.planId === 'decouverte' ? 'standard' : activeStore.planId);
   }, [activeStore.id]);
 
   // Le vendeur seul est concerné ; l'admin et les visiteurs passent directement
@@ -58,8 +60,14 @@ export const VendorAccessGate: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const trial = checkStoreTrialStatus(activeStore) as ReturnType<typeof checkStoreTrialStatus> & { isPaid?: boolean };
 
+  // Essai réellement accordé ? (la base n'accorde pas d'essai si le numéro WhatsApp en a déjà bénéficié)
+  const trialGranted =
+    activeStore.trialStartDate && activeStore.trialEndDate
+      ? new Date(activeStore.trialEndDate).getTime() - new Date(activeStore.trialStartDate).getTime() > 60 * 1000
+      : true;
+
   // ---------------------------------------------------------------------------
-  // 1. ACCÈS BLOQUÉ : essai terminé, aucune formule active
+  // 1. ACCÈS BLOQUÉ : essai terminé (ou non accordé), aucune formule active
   // ---------------------------------------------------------------------------
   if (trial.isExpired) {
     const pending = subscriptionRecords.find(
@@ -82,11 +90,22 @@ export const VendorAccessGate: React.FC<{ children: React.ReactNode }> = ({ chil
               <Lock className="w-7 h-7" />
             </div>
             <h1 className="font-heading font-black text-2xl sm:text-3xl text-stone-900">
-              Votre essai gratuit de {TRIAL_DAYS} jours est terminé
+              {trialGranted
+                ? `Votre essai gratuit de ${TRIAL_DAYS} jours est terminé`
+                : 'L’essai gratuit n’est pas disponible pour cette boutique'}
             </h1>
             <p className="text-sm text-stone-600 max-w-xl mx-auto leading-relaxed">
-              Pour accéder à votre tableau de bord de <strong>{activeStore.name}</strong>, activez une formule.
-              Vos produits et vos commandes sont conservés : rien n'est perdu.
+              {trialGranted ? (
+                <>
+                  Pour accéder à votre tableau de bord de <strong>{activeStore.name}</strong>, activez une formule.
+                  Vos produits et vos commandes sont conservés : rien n'est perdu.
+                </>
+              ) : (
+                <>
+                  L'essai gratuit n'est accordé qu'une seule fois par vendeur, et ce numéro WhatsApp en a déjà bénéficié.
+                  Pour accéder au tableau de bord de <strong>{activeStore.name}</strong>, activez une formule.
+                </>
+              )}
             </p>
             {pending && (
               <p className="inline-block text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
