@@ -1,18 +1,69 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { TRIAL_DAYS } from '../../data/plans';
+import type { SubscriptionPlan } from '../../types';
 import { 
   Check, 
+  Clock,
   HelpCircle, 
   AlertTriangle, 
   ArrowRight, 
-  ShieldCheck, 
-  Sparkles,
-  Zap
+  Sparkles
 } from 'lucide-react';
 
+// Les fonctionnalités pas encore développées portent la mention "(bientôt disponible)" dans la source des formules
+const FeatureItem: React.FC<{ text: string; dark: boolean }> = ({ text, dark }) => {
+  const soon = /\(bientôt disponible\)/i.test(text);
+  const clean = text.replace(/\s*\(bientôt disponible\)/i, '');
+  return (
+    <li className="flex items-start gap-2.5">
+      {soon ? (
+        <Clock className={`w-4 h-4 shrink-0 mt-0.5 ${dark ? 'text-stone-500' : 'text-stone-400'}`} />
+      ) : (
+        <Check className={`w-4 h-4 shrink-0 mt-0.5 ${dark ? 'text-amber-400' : 'text-emerald-600'}`} />
+      )}
+      <span className={dark ? 'text-stone-200' : 'text-stone-600'}>
+        {clean}
+        {soon && (
+          <span className={`ml-1.5 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
+            dark ? 'bg-stone-700 text-stone-300' : 'bg-stone-200 text-stone-600'
+          }`}>
+            Bientôt
+          </span>
+        )}
+      </span>
+    </li>
+  );
+};
+
 export const PricingPage: React.FC = () => {
-  const { plans, formatFCFA, setIsAuthModalOpen, setAuthModalMode, setCurrentView } = useApp();
+  const { plans, formatFCFA, setCurrentView } = useApp();
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+
+  const yes = <span className="font-bold text-emerald-600">✓ Oui</span>;
+  const no = <span className="text-stone-400">Non</span>;
+
+  // Le tableau comparatif est entièrement calculé à partir de la source unique des formules
+  const rows: { label: string; cell: (p: SubscriptionPlan) => React.ReactNode }[] = [
+    { label: 'Prix par mois', cell: (p) => <strong className="text-stone-900">{formatFCFA(p.priceMonthly)}</strong> },
+    { label: 'Prix par an (2 mois offerts)', cell: (p) => formatFCFA(p.priceYearly) },
+    { label: 'Nombre maximum de produits', cell: (p) => <strong>{p.maxProducts} produits</strong> },
+    { label: 'Logo et informations de la boutique', cell: () => yes },
+    { label: 'Lien de boutique à copier et partager', cell: () => yes },
+    { label: 'Commande du client envoyée sur votre WhatsApp', cell: (p) => (p.hasWhatsAppCheckout ? yes : no) },
+    { label: 'Commande complète : paiement, livraison, informations du client', cell: (p) => (p.hasAdvancedCheckout ? yes : no) },
+    { label: 'Boutons de partage vers vos réseaux sociaux', cell: (p) => (p.hasManualSocialShare ? yes : no) },
+    { label: 'Bilan de vos ventes (total, ruptures, produits les plus et moins vendus)', cell: (p) => (p.hasAiAnalytics ? yes : no) },
+    { label: 'Conseils de vente et aide IA à l’ajout d’un produit', cell: (p) => (p.hasVipAiAssistant ? yes : no) },
+    { label: 'Mise en avant auprès des acheteurs (Marketplace)', cell: (p) => (p.id === 'vip' ? yes : no) },
+    {
+      label: 'Agent IA qui publie votre lien toutes les 24 h (bientôt disponible)',
+      cell: (p) => (p.id === 'standard' ? '1 réseau social' : p.id === 'premium' ? '2 réseaux sociaux' : 'Tous vos réseaux')
+    },
+    { label: 'Scan d’un produit par l’IA (bientôt disponible)', cell: (p) => (p.id === 'vip' ? yes : no) },
+    { label: 'Commission sur vos ventes', cell: (p) => <span className="font-bold text-emerald-600">{p.commissionRate} %</span> },
+    { label: 'Support', cell: (p) => (p.prioritySupport ? <strong>Prioritaire</strong> : 'Standard') }
+  ];
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-16">
@@ -26,18 +77,18 @@ export const PricingPage: React.FC = () => {
           Des tarifs clairs, adaptés à la réalité des commerçants
         </h1>
         <p className="text-base sm:text-lg text-stone-600 leading-relaxed">
-          Choisissez la formule qui correspond à votre étape de croissance. Démarrez gratuitement et passez à la vitesse supérieure quand votre catalogue s'agrandit.
+          Essayez gratuitement pendant <strong>{TRIAL_DAYS} jours</strong>, avec la formule de votre choix. Ensuite, vous activez cette formule ou vous en choisissez une autre selon la taille de votre catalogue.
         </p>
 
-        {/* Prototype notice - mandatory requirement */}
+        {/* Fonctionnement du paiement */}
         <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-4 text-xs flex items-start gap-3 text-left">
           <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-bold">
-              Mention importante relative à la phase de développement (MVP) :
+              Comment se règle votre abonnement :
             </p>
             <p className="text-amber-800 leading-relaxed">
-              Les montants et conditions ci-dessous sont présentés à titre indicatif pour la démonstration du prototype Boutika. Les tarifs officiels, frais de transaction des passerelles (Wave, Orange Money) et conditions commerciales définitives seront validés lors du lancement commercial officiel.
+              Vous envoyez une demande d'activation depuis votre tableau de bord, puis vous réglez par Wave ou Orange Money. L'équipe Boutika active votre formule dès réception du paiement. Le paiement en ligne automatique arrive bientôt.
             </p>
           </div>
         </div>
@@ -62,7 +113,7 @@ export const PricingPage: React.FC = () => {
           <span className={`text-xs font-bold flex items-center gap-1.5 ${billingCycle === 'yearly' ? 'text-stone-900' : 'text-stone-500'}`}>
             <span>Paiement annuel</span>
             <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-bold">
-              -15% d'économie
+              2 mois offerts
             </span>
           </span>
         </div>
@@ -103,20 +154,21 @@ export const PricingPage: React.FC = () => {
                 <div className="pt-2">
                   <div className="flex items-baseline gap-1.5">
                     <span className="font-heading font-black text-4xl sm:text-5xl">
-                      {plan.priceMonthly === 0 ? 'Gratuit' : formatFCFA(displayPrice)}
+                      {formatFCFA(displayPrice)}
                     </span>
-                    {plan.priceMonthly > 0 && (
-                      <span className={`text-xs font-medium ${isPro ? 'text-stone-400' : 'text-stone-500'}`}>
-                        / mois
-                      </span>
-                    )}
+                    <span className={`text-xs font-medium ${isPro ? 'text-stone-400' : 'text-stone-500'}`}>
+                      / mois
+                    </span>
                   </div>
                   <p className={`text-[11px] mt-1 ${isPro ? 'text-amber-400' : 'text-stone-400'}`}>
-                    {plan.priceMonthly === 0 
-                      ? 'Sans frais d’inscription' 
-                      : billingCycle === 'yearly' 
-                        ? `Facturé ${formatFCFA(plan.priceYearly)} par an` 
-                        : 'Sans engagement, résiliable à tout moment'}
+                    {billingCycle === 'yearly'
+                      ? `Facturé ${formatFCFA(plan.priceYearly)} par an`
+                      : 'Sans engagement, résiliable à tout moment'}
+                  </p>
+                  <p className={`mt-2 inline-block text-[11px] font-bold rounded-full px-2.5 py-1 ${
+                    isPro ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-50 text-emerald-700'
+                  }`}>
+                    {TRIAL_DAYS} jours d'essai gratuit
                   </p>
                 </div>
 
@@ -126,10 +178,7 @@ export const PricingPage: React.FC = () => {
                   </p>
                   <ul className="space-y-2.5 text-xs">
                     {plan.features.map((feature, idx) => (
-                      <li key={idx} className="flex items-start gap-2.5">
-                        <Check className={`w-4 h-4 shrink-0 mt-0.5 ${isPro ? 'text-amber-400' : 'text-emerald-600'}`} />
-                        <span className={isPro ? 'text-stone-200' : 'text-stone-600'}>{feature}</span>
-                      </li>
+                      <FeatureItem key={idx} text={feature} dark={Boolean(isPro)} />
                     ))}
                   </ul>
                 </div>
@@ -144,7 +193,7 @@ export const PricingPage: React.FC = () => {
                       : 'bg-stone-900 hover:bg-stone-800 text-white shadow-sm'
                   }`}
                 >
-                  <span>Choisir cette formule</span>
+                  <span>Essayer {TRIAL_DAYS} jours gratuitement</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -154,7 +203,7 @@ export const PricingPage: React.FC = () => {
         })}
       </div>
 
-      {/* Feature Comparison Table */}
+      {/* Feature Comparison Table (calculé depuis la source unique des formules) */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200 shadow-sm space-y-6">
         <h3 className="font-heading font-bold text-2xl text-stone-900 text-center">
           Tableau comparatif détaillé
@@ -165,54 +214,27 @@ export const PricingPage: React.FC = () => {
             <thead>
               <tr className="border-b border-stone-200 text-stone-400 uppercase tracking-wider">
                 <th className="py-3 px-4 font-bold text-stone-800">Critères</th>
-                <th className="py-3 px-4 font-bold text-stone-800">Découverte (0 FCFA)</th>
-                <th className="py-3 px-4 font-bold text-amber-700 bg-amber-50/50">Teranga Pro (5 000 FCFA)</th>
-                <th className="py-3 px-4 font-bold text-stone-800">Ndam Élite (12 000 FCFA)</th>
+                {plans.map((p) => (
+                  <th
+                    key={p.id}
+                    className={`py-3 px-4 font-bold ${p.popular ? 'text-amber-700 bg-amber-50/50' : 'text-stone-800'}`}
+                  >
+                    {p.name}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100 text-stone-700">
-              <tr>
-                <td className="py-3 px-4 font-medium text-stone-900">Nombre max de produits</td>
-                <td className="py-3 px-4">10 produits</td>
-                <td className="py-3 px-4 bg-amber-50/30 font-semibold text-amber-900">100 produits</td>
-                <td className="py-3 px-4 font-semibold">Illimité</td>
-              </tr>
-              <tr>
-                <td className="py-3 px-4 font-medium text-stone-900">Lien de boutique personnalisé</td>
-                <td className="py-3 px-4">boutika.sn/v/nom</td>
-                <td className="py-3 px-4 bg-amber-50/30">boutika.sn/v/nom</td>
-                <td className="py-3 px-4">Nom de domaine propre possible</td>
-              </tr>
-              <tr>
-                <td className="py-3 px-4 font-medium text-stone-900">Commande WhatsApp 1-Clic</td>
-                <td className="py-3 px-4 font-bold text-emerald-600">✓ Oui</td>
-                <td className="py-3 px-4 bg-amber-50/30 font-bold text-emerald-600">✓ Oui</td>
-                <td className="py-3 px-4 font-bold text-emerald-600">✓ Oui</td>
-              </tr>
-              <tr>
-                <td className="py-3 px-4 font-medium text-stone-900">Gestion des stocks et alertes</td>
-                <td className="py-3 px-4 text-stone-400">Non</td>
-                <td className="py-3 px-4 bg-amber-50/30 font-bold text-emerald-600">✓ Oui</td>
-                <td className="py-3 px-4 font-bold text-emerald-600">✓ Oui</td>
-              </tr>
-              <tr>
-                <td className="py-3 px-4 font-medium text-stone-900">Frais par zone à Dakar</td>
-                <td className="py-3 px-4">Zone unique</td>
-                <td className="py-3 px-4 bg-amber-50/30 font-bold text-emerald-600">✓ Jusqu'à 5 zones</td>
-                <td className="py-3 px-4 font-bold text-emerald-600">✓ Zones illimitées + Régions</td>
-              </tr>
-              <tr>
-                <td className="py-3 px-4 font-medium text-stone-900">Commissions sur les ventes</td>
-                <td className="py-3 px-4 font-bold text-emerald-600">0% de commission</td>
-                <td className="py-3 px-4 bg-amber-50/30 font-bold text-emerald-600">0% de commission</td>
-                <td className="py-3 px-4 font-bold text-emerald-600">0% de commission</td>
-              </tr>
-              <tr>
-                <td className="py-3 px-4 font-medium text-stone-900">Support client</td>
-                <td className="py-3 px-4">Email standard</td>
-                <td className="py-3 px-4 bg-amber-50/30 font-semibold text-amber-900">WhatsApp prioritaire 6j/7</td>
-                <td className="py-3 px-4 font-semibold">Conseiller dédié 7j/7</td>
-              </tr>
+              {rows.map((row) => (
+                <tr key={row.label}>
+                  <td className="py-3 px-4 font-medium text-stone-900">{row.label}</td>
+                  {plans.map((p) => (
+                    <td key={p.id} className={`py-3 px-4 ${p.popular ? 'bg-amber-50/30' : ''}`}>
+                      {row.cell(p)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -228,10 +250,20 @@ export const PricingPage: React.FC = () => {
           <div className="bg-white p-5 rounded-2xl border border-stone-200 space-y-2">
             <h4 className="font-bold text-sm text-stone-900 flex items-center gap-2">
               <HelpCircle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>Comment se fera le règlement de mon abonnement au Sénégal ?</span>
+              <span>Comment fonctionne l'essai gratuit de {TRIAL_DAYS} jours ?</span>
             </h4>
             <p className="text-xs text-stone-600 leading-relaxed">
-              Nous envisageons l'intégration directe de Wave et Orange Money ainsi que les cartes bancaires via des passerelles agréées par la BCEAO. Les paiements ne seront validés qu'après confirmation serveur (webhook sécurisé).
+              Vous choisissez votre formule à l'inscription et vous profitez de toutes ses fonctionnalités pendant {TRIAL_DAYS} jours. L'essai n'est accordé qu'une seule fois par vendeur. À la fin, vous activez votre formule ou vous en choisissez une autre : sans activation, l'accès au tableau de bord est bloqué, mais vos produits sont conservés.
+            </p>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-stone-200 space-y-2">
+            <h4 className="font-bold text-sm text-stone-900 flex items-center gap-2">
+              <HelpCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Comment se fait le règlement de mon abonnement ?</span>
+            </h4>
+            <p className="text-xs text-stone-600 leading-relaxed">
+              Vous envoyez une demande d'activation depuis votre tableau de bord et vous réglez par Wave ou Orange Money. L'équipe Boutika active votre formule dès réception du paiement. Le paiement en ligne automatique, validé par les passerelles de paiement, arrive bientôt.
             </p>
           </div>
 
@@ -241,7 +273,7 @@ export const PricingPage: React.FC = () => {
               <span>Boutika prélève-t-il un pourcentage sur mes ventes ?</span>
             </h4>
             <p className="text-xs text-stone-600 leading-relaxed">
-              Non ! Contrairement à d'autres plateformes internationales, Boutika applique 0% de commission sur les ventes générées. Vous ne payez que le coût de votre formule mensuelle sans mauvaise surprise.
+              Non ! Contrairement à d'autres plateformes internationales, Boutika applique 0 % de commission sur les ventes générées. Vous ne payez que le prix de votre formule, sans mauvaise surprise.
             </p>
           </div>
 
@@ -251,7 +283,7 @@ export const PricingPage: React.FC = () => {
               <span>Puis-je changer de formule à tout moment ?</span>
             </h4>
             <p className="text-xs text-stone-600 leading-relaxed">
-              Oui, vous pouvez débuter avec la Formule Découverte pour roder votre boutique, puis passer à la Formule Teranga Pro en un clic dès que vos commandes augmentent.
+              Oui. Depuis l'onglet « Abonnement & Facturation » de votre tableau de bord, vous pouvez demander à passer de Standard à Premium ou à VIP dès que votre catalogue grandit.
             </p>
           </div>
         </div>

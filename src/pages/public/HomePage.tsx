@@ -1,5 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
+import { TRIAL_DAYS } from '../../data/plans';
 import { 
   Store, 
   ArrowRight, 
@@ -23,8 +24,11 @@ export const HomePage: React.FC = () => {
     stores, 
     setSelectedStoreSlug, 
     setActiveStoreId,
+    plans,
     formatFCFA
   } = useApp();
+
+  const cheapestPlan = plans.length > 0 ? plans.reduce((min, p) => (p.priceMonthly < min.priceMonthly ? p : min), plans[0]) : null;
 
   const handleOpenStore = (storeId: string, slug: string) => {
     setActiveStoreId(storeId);
@@ -65,7 +69,7 @@ export const HomePage: React.FC = () => {
                   onClick={() => setCurrentView('register')}
                   className="w-full sm:w-auto px-8 py-4 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2.5 text-base"
                 >
-                  <span>Créer ma boutique gratuitement</span>
+                  <span>Essayer {TRIAL_DAYS} jours gratuitement</span>
                   <ArrowRight className="w-5 h-5" />
                 </button>
 
@@ -77,6 +81,12 @@ export const HomePage: React.FC = () => {
                   <span>Explorer la Marketplace</span>
                 </button>
               </div>
+
+              {cheapestPlan && (
+                <p className="text-xs text-stone-500 text-center lg:text-left">
+                  Puis à partir de <strong>{formatFCFA(cheapestPlan.priceMonthly)} / mois</strong>, sans commission sur vos ventes.
+                </p>
+              )}
 
               {/* Trust checklist */}
               <div className="pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-semibold text-stone-600">
@@ -229,91 +239,110 @@ export const HomePage: React.FC = () => {
         </div>
       </section>
 
-      {/* Interactive Live Stores Showcase */}
+      {/* Boutiques réelles créées avec Boutika */}
       <section className="bg-stone-100/70 py-16 border-y border-stone-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-10">
             <div>
               <span className="text-xs font-extrabold uppercase tracking-widest text-emerald-700">
-                Exemples concrets à Dakar
+                Nos commerçants
               </span>
               <h2 className="font-heading font-black text-3xl text-stone-900 mt-1">
                 Découvrez des boutiques créées avec Boutika
               </h2>
             </div>
-            <button
-              onClick={() => setCurrentView('public-store')}
-              className="text-amber-700 font-bold hover:text-amber-800 flex items-center gap-1.5 text-sm"
-            >
-              <span>Tester la boutique en direct</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            {stores.length > 0 && (
+              <button
+                onClick={() => setCurrentView('marketplace')}
+                className="text-amber-700 font-bold hover:text-amber-800 flex items-center gap-1.5 text-sm"
+              >
+                <span>Voir toutes les boutiques</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {stores.map((store) => (
-              <div 
-                key={store.id} 
-                className="bg-white rounded-2xl overflow-hidden border border-stone-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+          {stores.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-dashed border-stone-300 p-10 text-center space-y-3">
+              <p className="font-heading font-bold text-lg text-stone-900">
+                Les premières boutiques arrivent bientôt
+              </p>
+              <p className="text-sm text-stone-600 max-w-md mx-auto">
+                Soyez parmi les premiers commerçants à ouvrir votre boutique sur Boutika.
+              </p>
+              <button
+                onClick={() => setCurrentView('register')}
+                className="px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-xl text-sm transition-colors"
               >
-                <div>
-                  <div className="relative h-44 overflow-hidden">
-                    <img 
-                      src={store.bannerUrl} 
-                      alt={store.name} 
-                      className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-                    />
-                    <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm px-2.5 py-1 rounded-full text-[11px] font-bold text-stone-800 shadow-sm">
-                      {store.city}
-                    </div>
-                  </div>
-
-                  <div className="p-5 space-y-3">
-                    <div className="flex items-center gap-3">
+                Essayer {TRIAL_DAYS} jours gratuitement
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {stores.map((store) => (
+                <div 
+                  key={store.id} 
+                  className="bg-white rounded-2xl overflow-hidden border border-stone-200 shadow-sm hover:shadow-md transition-all flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="relative h-44 overflow-hidden">
                       <img 
-                        src={store.logoUrl} 
+                        src={store.bannerUrl} 
                         alt={store.name} 
-                        className="w-12 h-12 rounded-xl object-cover border-2 border-white shadow-sm -mt-8"
+                        className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
                       />
-                      <div>
-                        <h3 className="font-bold text-base text-stone-900 leading-tight">
-                          {store.name}
-                        </h3>
-                        <p className="text-xs text-amber-700 font-mono">
-                          boutika.sn/v/{store.slug}
-                        </p>
+                      <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm px-2.5 py-1 rounded-full text-[11px] font-bold text-stone-800 shadow-sm">
+                        {store.city}
                       </div>
                     </div>
 
-                    <p className="text-xs text-stone-600 line-clamp-2">
-                      {store.description}
-                    </p>
+                    <div className="p-5 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <img 
+                          src={store.logoUrl} 
+                          alt={store.name} 
+                          className="w-12 h-12 rounded-xl object-cover border-2 border-white shadow-sm -mt-8"
+                        />
+                        <div>
+                          <h3 className="font-bold text-base text-stone-900 leading-tight">
+                            {store.name}
+                          </h3>
+                          <p className="text-xs text-amber-700 font-mono">
+                            boutika.sn/v/{store.slug}
+                          </p>
+                        </div>
+                      </div>
 
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {store.categories.slice(0, 3).map((cat, idx) => (
-                        <span key={idx} className="text-[10px] bg-stone-100 text-stone-600 px-2 py-0.5 rounded font-medium">
-                          {cat}
-                        </span>
-                      ))}
+                      <p className="text-xs text-stone-600 line-clamp-2">
+                        {store.description}
+                      </p>
+
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {store.categories.slice(0, 3).map((cat, idx) => (
+                          <span key={idx} className="text-[10px] bg-stone-100 text-stone-600 px-2 py-0.5 rounded font-medium">
+                            {cat}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="p-5 pt-0 border-t border-stone-100 mt-3 flex items-center justify-between">
-                  <span className="text-xs text-stone-500 font-medium">
-                    {store.deliveryZones.length} zones de livraison
-                  </span>
-                  <button
-                    onClick={() => handleOpenStore(store.id, store.slug)}
-                    className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors"
-                  >
-                    <span>Visiter</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="p-5 pt-0 border-t border-stone-100 mt-3 flex items-center justify-between">
+                    <span className="text-xs text-stone-500 font-medium">
+                      {store.deliveryZones.length} zones de livraison
+                    </span>
+                    <button
+                      onClick={() => handleOpenStore(store.id, store.slug)}
+                      className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors"
+                    >
+                      <span>Visiter</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -338,7 +367,7 @@ export const HomePage: React.FC = () => {
               Créez votre boutique
             </h3>
             <p className="text-sm text-stone-600 leading-relaxed">
-              Donnez un nom à votre boutique, ajoutez votre logo et votre numéro WhatsApp en moins de 2 minutes. Aucun document complexe requis au départ.
+              Donnez un nom à votre boutique, choisissez votre formule et indiquez votre numéro WhatsApp en moins de 2 minutes, puis ajoutez votre logo. Vous profitez de {TRIAL_DAYS} jours d'essai gratuit.
             </p>
           </div>
 
@@ -390,7 +419,7 @@ export const HomePage: React.FC = () => {
               Prêt à développer vos ventes en ligne dès aujourd'hui ?
             </h2>
             <p className="text-stone-300 text-sm sm:text-base leading-relaxed">
-              Testez gratuitement Boutika sans engagement. Configurez votre catalogue et commencez à partager votre boutique dès aujourd'hui.
+              Essayez Boutika gratuitement pendant {TRIAL_DAYS} jours, avec la formule de votre choix. Configurez votre catalogue et commencez à partager votre boutique dès aujourd'hui.
             </p>
             <div className="pt-4 flex flex-col sm:flex-row gap-4">
               <button
