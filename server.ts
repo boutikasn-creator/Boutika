@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -34,9 +34,58 @@ const serverSupabase: SupabaseClient | null = (supabaseUrl && supabaseServiceKey
   : null;
 
 if (!serverSupabase) {
-  console.log('[Supabase Server Architecture Notice]: SUPABASE_SERVICE_ROLE_KEY n’est pas configurée dans l’environnement serveur. Le serveur opère avec son stockage résilient local (/data/*.json). En production Cloud Run multi-instances, renseignez SUPABASE_SERVICE_ROLE_KEY et appliquez supabase/migrations/20261029000001_security_roles_audit.sql pour activer PostgreSQL comme source de vérité persistante.');
+  console.log('[Supabase Server Architecture Notice]: SUPABASE_SERVICE_ROLE_KEY n’est pas configurée dans l’environnement serveur. Les routes réservées au Super Admin sont DÉSACTIVÉES (503) et les rappels de fin d’essai sont inactifs. Renseignez SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY dans le fichier .env.');
 } else {
   console.log('[Supabase Server Architecture]: Connecté à PostgreSQL Supabase via la clé de service sécurisée backend.');
+}
+
+/* -------------------------------------------------------------------------- */
+/* AUTHENTIFICATION : routes réservées au Super Admin                          */
+/* Le navigateur envoie son jeton de session (Authorization: Bearer ...).      */
+/* Le serveur le vérifie auprès de Supabase, puis contrôle le rôle en base.     */
+/* -------------------------------------------------------------------------- */
+async function checkSuperAdmin(req: Request): Promise<{ ok: true; userId: string } | { ok: false; status: number; message: string }> {
+  if (!serverSupabase) {
+    return { ok: false, status: 503, message: 'Authentification serveur non configurée (SUPABASE_SERVICE_ROLE_KEY manquante).' };
+  }
+  const header = req.headers['authorization'];
+  const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (!token) {
+    return { ok: false, status: 401, message: 'Authentification requise.' };
+  }
+  try {
+    const { data, error } = await serverSupabase.auth.getUser(token);
+    if (error || !data?.user) {
+      return { ok: false, status: 401, message: 'Session invalide ou expirée.' };
+    }
+    const { data: profile } = await serverSupabase
+      .from('profiles')
+      .select('role')
+      .eq('id', data.user.id)
+      .maybeSingle();
+    if (!profile || profile.role !== 'super_admin') {
+      return { ok: false, status: 403, message: 'Accès réservé au Super Admin.' };
+    }
+    return { ok: true, userId: data.user.id };
+  } catch {
+    return { ok: false, status: 401, message: 'Vérification de session impossible.' };
+  }
+}
+
+const requireSuperAdmin = async (req: Request, res: Response, next: NextFunction) => {
+  const result = await checkSuperAdmin(req);
+  if (!result.ok) {
+    return res.status(result.status).json({ success: false, message: result.message });
+  }
+  (req as any).adminUserId = result.userId;
+  next();
+};
+
+// Plafonds de catalogue par formule (même règle que la base : Standard 50, Premium 150, VIP 500)
+function maxProductsForPlan(planId: string): number {
+  if (planId === 'vip' || planId === 'business') return 500;
+  if (planId === 'premium' || planId === 'pro') return 150;
+  return 50;
 }
 
 // Disk persistence paths (local container cache / fallback)
@@ -113,31 +162,14 @@ function saveJsonFile<T>(filePath: string, content: T): void {
   }
 }
 
+// Plus aucune donnée de démonstration : l'état de la plateforme démarre vide et se remplit
+// uniquement avec les vraies données envoyées par le Super Admin connecté.
 function loadPlatformState(): PlatformState {
   const fallback: PlatformState = {
-    stores: [
-      { id: 'store-teranga-wax', name: 'Teranga Wax & Créations', planId: 'vip', status: 'active', trialUsed: true },
-      { id: 'store-keur-thiouraye', name: 'Keur Thiouraye Authentique', planId: 'standard', status: 'active' },
-      { id: 'store-dakar-tech', name: 'Dakar Tech Accessoires', planId: 'premium', status: 'active' },
-      { id: 'store-saveurs-baobab', name: 'Saveurs du Baobab Épicerie', planId: 'standard', status: 'active' },
-      { id: 'store-bijoux-goree', name: 'Bijoux & Perles de Gorée', planId: 'standard', status: 'active' }
-    ],
-    products: [
-      { id: 'p1', storeId: 'store-teranga-wax', name: 'Boubou Moderne Wax', price: 25000, stock: 15 },
-      { id: 'p2', storeId: 'store-teranga-wax', name: 'Robe Brodée Soleil', price: 32000, stock: 8 },
-      { id: 'p3', storeId: 'store-teranga-wax', name: 'Chemise Homme Col Officier', price: 18000, stock: 12 },
-      { id: 'p4', storeId: 'store-teranga-wax', name: 'Sac Bandoulière Wax & Cuir', price: 15000, stock: 20 },
-      { id: 'p5', storeId: 'store-teranga-wax', name: 'Éventail Artisanal Wax', price: 4500, stock: 35 }
-    ],
-    orders: [
-      { id: 'ord-01', orderNumber: 'BK-2610-101', storeId: 'store-teranga-wax', total: 52000, paymentStatus: 'paye', status: 'livree' },
-      { id: 'ord-02', orderNumber: 'BK-2610-102', storeId: 'store-teranga-wax', total: 27000, paymentStatus: 'paye', status: 'en_preparation' },
-      { id: 'ord-03', orderNumber: 'BK-2610-103', storeId: 'store-teranga-wax', total: 19500, paymentStatus: 'en_attente', status: 'nouvelle' }
-    ],
-    contactMessages: [
-      { id: 'msg-01', subject: 'Question intégration Wave', status: 'traite' },
-      { id: 'msg-02', subject: 'Demande renseignement commission', status: 'en_attente' }
-    ],
+    stores: [],
+    products: [],
+    orders: [],
+    contactMessages: [],
     lastSyncedAt: new Date().toISOString()
   };
   return loadJsonFile<PlatformState>(PLATFORM_STATE_FILE, fallback);
@@ -301,7 +333,7 @@ function executeMissionAuditActions(mission: ServerKimsiMission): { actionName: 
       };
     }
 
-    // 2. Quotas & RLS Audit (Official Commercial Quotas: Standard=50 gratuit permanent, Premium=150, VIP=500)
+    // 2. Quotas & RLS Audit (quotas officiels : Standard=50, Premium=150, VIP=500 ; aucune formule gratuite)
     if (lowerTitle.includes('quota') || lowerTitle.includes('rls') || lowerTitle.includes('conformité') || lowerObjective.includes('quota') || mission.missionType === 'quotas_rls_audit') {
       const totalStores = state.stores.length;
       const standardStores = state.stores.filter((s) => s.planId === 'standard' || s.planId === 'decouverte');
@@ -311,15 +343,7 @@ function executeMissionAuditActions(mission: ServerKimsiMission): { actionName: 
       const quotaViolations: string[] = [];
       state.stores.forEach((s) => {
         const prodCount = state.products.filter((p) => p.storeId === s.id).length;
-        let maxAllowed = 50;
-        if (s.planId === 'vip' || s.planId === 'business') {
-          maxAllowed = s.trialUsed ? 50 : 500;
-        } else if (s.planId === 'premium' || s.planId === 'pro') {
-          maxAllowed = s.trialUsed ? 50 : 150;
-        } else {
-          maxAllowed = 50; // Standard: permanent free up to 50
-        }
-
+        const maxAllowed = maxProductsForPlan(s.planId);
         if (prodCount > maxAllowed) {
           quotaViolations.push(`${s.name} (${prodCount}/${maxAllowed} produits - Formule ${s.planId.toUpperCase()})`);
         }
@@ -337,8 +361,8 @@ function executeMissionAuditActions(mission: ServerKimsiMission): { actionName: 
 
     // 3. Support & Tickets Audit
     if (lowerTitle.includes('support') || lowerTitle.includes('ticket') || lowerTitle.includes('alerte') || mission.missionType === 'support_surveillance') {
-      const pendingTickets = state.contactMessages.filter((m) => m.status === 'en_attente');
-      const details = `Audit support : ${state.contactMessages.length} tickets analysés. ${pendingTickets.length} ticket(s) en attente de réponse. Délai moyen de prise en charge < 2h.`;
+      const pendingTickets = state.contactMessages.filter((m) => m.status === 'en_attente' || m.status === 'nouveau');
+      const details = `Audit support : ${state.contactMessages.length} tickets analysés. ${pendingTickets.length} ticket(s) en attente de réponse.`;
       return {
         actionName: 'SUPPORT_TICKETS_AUDIT',
         details,
@@ -347,7 +371,7 @@ function executeMissionAuditActions(mission: ServerKimsiMission): { actionName: 
     }
 
     // 4. Default System Health Audit
-    const details = `Supervision générale : Uptime ${Math.floor(process.uptime())}s, ${state.stores.length} boutiques actives, ${state.orders.length} commandes enregistrées. Démon serveur stable.`;
+    const details = `Supervision générale : Uptime ${Math.floor(process.uptime())}s, ${state.stores.length} boutiques, ${state.orders.length} commandes enregistrées. Démon serveur stable.`;
     return { actionName: 'SYSTEM_HEALTH_AUDIT', details, severity: 'info' };
   } catch (err: any) {
     return {
@@ -406,33 +430,237 @@ setInterval(() => {
   }
 }, 30000);
 
-// 1. API Health Check
+/* -------------------------------------------------------------------------- */
+/* RAPPELS DE FIN D'ESSAI (e-mail + WhatsApp) — la veille de la fin de l'essai  */
+/*                                                                            */
+/* Variables d'environnement (toutes facultatives : sans elles, le canal est   */
+/* simplement ignoré) :                                                       */
+/*   E-mail   : RESEND_API_KEY, MAIL_FROM  (ex: "Boutika <noreply@votre-domaine>") */
+/*   WhatsApp : WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID,               */
+/*              WHATSAPP_TRIAL_TEMPLATE (modèle approuvé par Meta, 2 variables : */
+/*              {{1}} nom de la boutique, {{2}} heures restantes),             */
+/*              WHATSAPP_TEMPLATE_LANG (défaut : fr)                           */
+/* -------------------------------------------------------------------------- */
+const PLAN_LABELS: Record<string, string> = { standard: 'Standard', premium: 'Premium', vip: 'VIP', decouverte: 'Standard' };
+
+async function getVendorEmail(userId: string): Promise<string | null> {
+  if (!serverSupabase) return null;
+  try {
+    const { data } = await serverSupabase.auth.admin.getUserById(userId);
+    return data?.user?.email || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeWhatsAppNumber(raw: string | null | undefined): string | null {
+  const digits = String(raw || '').replace(/[^0-9]/g, '');
+  if (!digits) return null;
+  if (digits.length === 9) return `221${digits}`; // numéro sénégalais saisi sans l'indicatif
+  return digits;
+}
+
+async function sendTrialReminderEmail(to: string, storeName: string, planLabel: string, hoursLeft: number): Promise<{ ok: boolean; detail: string }> {
+  const key = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM;
+  if (!key || !from) {
+    return { ok: false, detail: 'non configuré : RESEND_API_KEY / MAIL_FROM absents' };
+  }
+  try {
+    const html = `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#1c1917">
+      <h2 style="color:#b45309">Votre essai gratuit Boutika se termine bientôt</h2>
+      <p>Bonjour,</p>
+      <p>L'essai gratuit de votre boutique <strong>${storeName}</strong> (formule <strong>${planLabel}</strong>) se termine dans environ <strong>${hoursLeft} heure(s)</strong>.</p>
+      <p>Pour garder l'accès à votre tableau de bord, activez votre formule depuis l'onglet <em>Abonnement &amp; Facturation</em>. Vos produits et vos commandes sont conservés.</p>
+      <p style="color:#78716c;font-size:12px">— L'équipe Boutika</p>
+    </div>`;
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject: 'Votre essai gratuit Boutika se termine demain',
+        html
+      })
+    });
+    if (!res.ok) {
+      return { ok: false, detail: `Resend ${res.status} : ${(await res.text()).slice(0, 200)}` };
+    }
+    return { ok: true, detail: 'e-mail envoyé' };
+  } catch (err: any) {
+    return { ok: false, detail: `Resend injoignable : ${err?.message || 'erreur réseau'}` };
+  }
+}
+
+async function sendTrialReminderWhatsApp(phone: string, storeName: string, hoursLeft: number): Promise<{ ok: boolean; detail: string }> {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const template = process.env.WHATSAPP_TRIAL_TEMPLATE;
+  const lang = process.env.WHATSAPP_TEMPLATE_LANG || 'fr';
+  if (!token || !phoneId || !template) {
+    return { ok: false, detail: 'non configuré : WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_TRIAL_TEMPLATE absents' };
+  }
+  try {
+    const res = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: phone,
+        type: 'template',
+        template: {
+          name: template,
+          language: { code: lang },
+          components: [
+            {
+              type: 'body',
+              parameters: [
+                { type: 'text', text: storeName },
+                { type: 'text', text: String(hoursLeft) }
+              ]
+            }
+          ]
+        }
+      })
+    });
+    if (!res.ok) {
+      return { ok: false, detail: `WhatsApp ${res.status} : ${(await res.text()).slice(0, 200)}` };
+    }
+    return { ok: true, detail: 'message WhatsApp envoyé' };
+  } catch (err: any) {
+    return { ok: false, detail: `WhatsApp injoignable : ${err?.message || 'erreur réseau'}` };
+  }
+}
+
+async function runTrialReminders(): Promise<{ checked: number; notified: number; details: string[] }> {
+  const summary = { checked: 0, notified: 0, details: [] as string[] };
+  if (!serverSupabase) {
+    summary.details.push('Rappels désactivés : SUPABASE_SERVICE_ROLE_KEY non configurée.');
+    return summary;
+  }
+
+  const nowIso = new Date().toISOString();
+  const limitIso = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+
+  // Boutiques dont l'essai se termine dans les 24 prochaines heures et qui n'ont pas encore été prévenues
+  const { data: stores, error } = await serverSupabase
+    .from('stores')
+    .select('id, name, vendor_id, plan_id, whatsapp_number, trial_end_date')
+    .is('trial_reminder_sent_at', null)
+    .gt('trial_end_date', nowIso)
+    .lte('trial_end_date', limitIso);
+
+  if (error) {
+    summary.details.push(`Lecture des boutiques impossible : ${error.message} (la migration 20261101000005 est-elle appliquée ?)`);
+    return summary;
+  }
+
+  for (const s of stores || []) {
+    summary.checked++;
+
+    // Un abonnement déjà actif : inutile de prévenir
+    const { data: subs } = await serverSupabase
+      .from('subscription_records')
+      .select('id')
+      .eq('store_id', s.id)
+      .eq('status', 'active')
+      .gt('valid_until', nowIso)
+      .limit(1);
+    if (subs && subs.length > 0) continue;
+
+    const hoursLeft = Math.max(1, Math.round((new Date(s.trial_end_date).getTime() - Date.now()) / 3600000));
+    const planLabel = PLAN_LABELS[String(s.plan_id)] || String(s.plan_id || 'Standard');
+    const results: Array<{ channel: string; ok: boolean; detail: string }> = [];
+
+    const email = await getVendorEmail(String(s.vendor_id));
+    if (email) {
+      const r = await sendTrialReminderEmail(email, String(s.name), planLabel, hoursLeft);
+      results.push({ channel: 'email', ...r });
+    }
+
+    const phone = normalizeWhatsAppNumber(s.whatsapp_number);
+    if (phone) {
+      const r = await sendTrialReminderWhatsApp(phone, String(s.name), hoursLeft);
+      results.push({ channel: 'whatsapp', ...r });
+    }
+
+    // Journal : on n'écrit pas les canaux simplement non configurés (évite le bruit à chaque passage)
+    for (const r of results) {
+      if (r.detail.startsWith('non configuré')) continue;
+      await serverSupabase.from('trial_notifications').insert({
+        store_id: s.id,
+        channel: r.channel,
+        status: r.ok ? 'sent' : 'failed',
+        detail: r.detail
+      });
+    }
+
+    if (results.some((r) => r.ok)) {
+      await serverSupabase
+        .from('stores')
+        .update({ trial_reminder_sent_at: new Date().toISOString() })
+        .eq('id', s.id);
+      summary.notified++;
+    } else {
+      summary.details.push(`${s.name} : aucun rappel envoyé (${results.map((r) => `${r.channel} : ${r.detail}`).join(' ; ') || 'aucun canal disponible'})`);
+    }
+  }
+
+  return summary;
+}
+
+// Passage automatique toutes les 6 heures (premier passage 60 secondes après le démarrage)
+setTimeout(() => {
+  runTrialReminders()
+    .then((s) => { if (s.checked > 0) console.log('[Rappels fin d\'essai]', JSON.stringify(s)); })
+    .catch((e) => console.error('[Rappels fin d\'essai] erreur :', e?.message || e));
+}, 60 * 1000);
+setInterval(() => {
+  runTrialReminders()
+    .then((s) => { if (s.checked > 0) console.log('[Rappels fin d\'essai]', JSON.stringify(s)); })
+    .catch((e) => console.error('[Rappels fin d\'essai] erreur :', e?.message || e));
+}, 6 * 3600 * 1000);
+
+// 1. API Health Check : public et minimal (la configuration détaillée est réservée au Super Admin)
 app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/health/details', requireSuperAdmin, (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     platform: 'Boutika Backend API',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     environment: {
-      storageModel: serverSupabase ? 'PostgreSQL (Supabase Direct) + Local Resilient Cache' : 'Dual-Layer: Local Ephemeral JSON Cache + PostgreSQL Target',
-      cloudRunNotice: 'Sur Cloud Run, le stockage /data est éphémère (RAM container). Pour la persistance inter-instances en production, la base Supabase PostgreSQL est la source de vérité.'
+      storageModel: serverSupabase ? 'PostgreSQL (Supabase Direct) + Local Resilient Cache' : 'Local Ephemeral JSON Cache',
     },
     geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
     supabaseConfigured: Boolean(process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_PUBLISHABLE_KEY),
+    serviceRoleConfigured: Boolean(serverSupabase),
     waveWebhookConfigured: Boolean(process.env.WAVE_WEBHOOK_SECRET),
     orangeMoneyConfigured: Boolean(process.env.ORANGE_MONEY_MERCHANT_KEY),
     metaSocialConfigured: Boolean(process.env.META_PAGE_ACCESS_TOKEN),
-    whatsappWebhookConfigured: Boolean(process.env.WHATSAPP_VERIFY_TOKEN)
+    whatsappWebhookConfigured: Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
+    emailRemindersConfigured: Boolean(process.env.RESEND_API_KEY && process.env.MAIL_FROM),
+    whatsappRemindersConfigured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_TRIAL_TEMPLATE)
   });
 });
 
-// 2. Persistent Kimsi Background Missions API (Server Authoritative)
-app.get('/api/kimsi/missions', (_req: Request, res: Response) => {
+// Lancement manuel des rappels de fin d'essai (bouton du panneau admin)
+app.post('/api/admin/trial-reminders/run', requireSuperAdmin, async (_req: Request, res: Response) => {
+  const summary = await runTrialReminders();
+  res.json({ success: true, ...summary });
+});
+
+// 2. Persistent Kimsi Background Missions API (Server Authoritative) : Super Admin uniquement
+app.get('/api/kimsi/missions', requireSuperAdmin, (_req: Request, res: Response) => {
   serverMissions = loadServerMissions();
   res.json({ success: true, missions: serverMissions });
 });
 
-app.post('/api/kimsi/missions', (req: Request, res: Response) => {
+app.post('/api/kimsi/missions', requireSuperAdmin, (req: Request, res: Response) => {
   const { title, name, targetObjective, durationHours } = req.body;
   const missionTitle = (typeof title === 'string' ? title : typeof name === 'string' ? name : '').trim();
   if (!missionTitle) {
@@ -488,7 +716,7 @@ app.post('/api/kimsi/missions', (req: Request, res: Response) => {
   res.status(201).json({ success: true, mission: newMission });
 });
 
-app.post('/api/kimsi/missions/:id/stop', (req: Request, res: Response) => {
+app.post('/api/kimsi/missions/:id/stop', requireSuperAdmin, (req: Request, res: Response) => {
   const missionId = req.params.id;
   serverMissions = loadServerMissions();
   const mission = serverMissions.find((m) => m.id === missionId);
@@ -510,8 +738,8 @@ app.post('/api/kimsi/missions/:id/stop', (req: Request, res: Response) => {
   res.json({ success: true, message: 'Mission Kimsi arrêtée avec succès.', mission });
 });
 
-// 3. Platform State Synchronization & Quota Discrepancy Monitoring
-app.post('/api/platform/sync', (req: Request, res: Response) => {
+// 3. Platform State Synchronization & Quota Discrepancy Monitoring : Super Admin uniquement
+app.post('/api/platform/sync', requireSuperAdmin, (req: Request, res: Response) => {
   const { stores, products, orders, contactMessages } = req.body;
   const current = loadPlatformState();
 
@@ -527,14 +755,7 @@ app.post('/api/platform/sync', (req: Request, res: Response) => {
   const quotaNotices: string[] = [];
   updated.stores.forEach((s) => {
     const prodCount = updated.products.filter((p) => p.storeId === s.id).length;
-    let maxAllowed = 50;
-    if (s.planId === 'vip' || s.planId === 'business') {
-      maxAllowed = s.trialUsed ? 50 : 500;
-    } else if (s.planId === 'premium' || s.planId === 'pro') {
-      maxAllowed = s.trialUsed ? 50 : 150;
-    } else {
-      maxAllowed = 50;
-    }
+    const maxAllowed = maxProductsForPlan(s.planId);
     if (prodCount > maxAllowed) {
       quotaNotices.push(`Boutique "${s.name}" : ${prodCount}/${maxAllowed} produits. Catalogue conservé, nouvel ajout bloqué.`);
     }
@@ -550,6 +771,7 @@ app.post('/api/platform/sync', (req: Request, res: Response) => {
 });
 
 // Server-Authoritative Product Quota Validation (Standard=50, Premium=150, VIP=500)
+// (la véritable garantie est le trigger SQL guard_product_store_quota de la base)
 app.post('/api/products/validate-quota', (req: Request, res: Response) => {
   const { storeId } = req.body;
   if (!storeId || typeof storeId !== 'string') {
@@ -563,14 +785,7 @@ app.post('/api/products/validate-quota', (req: Request, res: Response) => {
   }
 
   const currentCount = pState.products.filter((p) => p.storeId === storeId).length;
-  let maxAllowed = 50;
-  if (store.planId === 'vip' || store.planId === 'business') {
-    maxAllowed = store.trialUsed ? 50 : 500;
-  } else if (store.planId === 'premium' || store.planId === 'pro') {
-    maxAllowed = store.trialUsed ? 50 : 150;
-  } else {
-    maxAllowed = 50; // Standard: permanent free up to 50
-  }
+  const maxAllowed = maxProductsForPlan(store.planId);
 
   if (currentCount >= maxAllowed) {
     return res.status(403).json({
@@ -591,7 +806,7 @@ app.post('/api/products/validate-quota', (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/platform/state', (_req: Request, res: Response) => {
+app.get('/api/platform/state', requireSuperAdmin, (_req: Request, res: Response) => {
   res.json({ success: true, state: loadPlatformState() });
 });
 
@@ -735,9 +950,10 @@ app.post('/api/webhooks/orange-money', (req: Request, res: Response) => {
     });
   }
 
+  // La clé marchande est OBLIGATOIRE : une notification sans clé est refusée (avant, elle était acceptée)
   const authHeader = req.headers['authorization'] || req.headers['x-merchant-key'];
-  if (authHeader && authHeader !== merchantKey && authHeader !== `Bearer ${merchantKey}`) {
-    return res.status(401).json({ success: false, message: 'Clé marchande Orange Money non reconnue.' });
+  if (!authHeader || (authHeader !== merchantKey && authHeader !== `Bearer ${merchantKey}`)) {
+    return res.status(401).json({ success: false, message: 'Clé marchande Orange Money absente ou non reconnue.' });
   }
 
   const notifToken = req.body?.notif_token || req.body?.order_id || `om-${Date.now()}`;
@@ -841,7 +1057,7 @@ app.post('/api/webhooks/whatsapp', (req: Request, res: Response) => {
   res.status(200).send('EVENT_RECEIVED');
 });
 
-// 7. Server-Authoritative Payment Verification Query
+// 7. Vérification publique d'un paiement : ne renvoie que l'essentiel (pas de détails internes)
 app.get('/api/payments/status/:orderRef', (req: Request, res: Response) => {
   const orderRef = req.params.orderRef;
   const events = loadPaymentEvents();
@@ -854,14 +1070,12 @@ app.get('/api/payments/status/:orderRef', (req: Request, res: Response) => {
   res.json({
     paid: payment.status === 'paye',
     status: payment.status,
-    gateway: payment.gateway,
-    verifiedAt: payment.receivedAt,
-    transactionId: payment.id,
-    integrityNote: payment.integrityNote
+    verifiedAt: payment.receivedAt
   });
 });
 
-app.get('/api/payments/events', (_req: Request, res: Response) => {
+// Historique complet des paiements : Super Admin uniquement
+app.get('/api/payments/events', requireSuperAdmin, (_req: Request, res: Response) => {
   res.json({ success: true, events: loadPaymentEvents() });
 });
 

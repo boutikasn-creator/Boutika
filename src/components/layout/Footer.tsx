@@ -125,10 +125,10 @@ export const Footer: React.FC = () => {
               </li>
               <li>
                 <button 
-                  onClick={() => setCurrentView('public-store')} 
+                  onClick={() => setCurrentView('marketplace')} 
                   className="hover:text-amber-400 transition-colors text-left flex items-center gap-1 text-emerald-400"
                 >
-                  <span>Exemple de boutique</span>
+                  <span>Découvrir les boutiques</span>
                   <ExternalLink className="w-3 h-3" />
                 </button>
               </li>
@@ -146,14 +146,6 @@ export const Footer: React.FC = () => {
                 <span className="text-stone-400 text-xs">
                   Zones de livraison Dakar & Régions
                 </span>
-              </li>
-              <li>
-                <button 
-                  onClick={() => setCurrentView('architecture')} 
-                  className="hover:text-amber-400 transition-colors text-xs text-indigo-400"
-                >
-                  Spécifications & Sécurité
-                </button>
               </li>
             </ul>
           </div>
@@ -208,7 +200,7 @@ export const Footer: React.FC = () => {
               Devise : Franc CFA (XOF)
             </span>
             <span className="bg-stone-800 px-2.5 py-1 rounded text-stone-400 text-[11px]">
-              Intégrations envisagées : Wave, OM, CB
+              Paiement : Wave & Orange Money
             </span>
           </div>
         </div>

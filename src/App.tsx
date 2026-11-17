@@ -4,6 +4,7 @@ import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
 import { Toast } from './components/common/Toast';
 import { VendorAccessGate } from './components/vendor/VendorAccessGate';
+import { AdminSubscriptionsPanel } from './components/admin/AdminSubscriptionsPanel';
 import { AuthModal } from './pages/public/AuthModal';
 import { HomePage } from './pages/public/HomePage';
 import { AboutPage } from './pages/public/AboutPage';
@@ -19,7 +20,6 @@ import { PublicStorePage } from './pages/storefront/PublicStorePage';
 import { MarketplacePage } from './pages/public/MarketplacePage';
 import { VendorDashboard } from './pages/vendor/VendorDashboard';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
-import { ArchitecturePage } from './pages/tech/ArchitectureDrawer';
 import { RegisterPage } from './pages/auth/RegisterPage';
 import { LoginPage } from './pages/auth/LoginPage';
 import { AuthCallbackPage } from './pages/auth/AuthCallbackPage';
@@ -39,7 +39,8 @@ const AppContent: React.FC = () => {
 
       {/* Main View Router */}
       <main className="flex-1">
-        {currentView === 'home' && <HomePage />}
+        {/* L'ancienne page technique "Architecture" n'est plus accessible : on revient à l'accueil */}
+        {(currentView === 'home' || currentView === 'architecture') && <HomePage />}
         {currentView === 'marketplace' && <MarketplacePage />}
         {currentView === 'about' && <AboutPage />}
         {currentView === 'how-it-works' && <HowItWorksPage />}
@@ -54,15 +55,20 @@ const AppContent: React.FC = () => {
             <VendorDashboard />
           </VendorAccessGate>
         )}
-        {currentView === 'admin-dashboard' && <AdminDashboard />}
-        {currentView === 'architecture' && <ArchitecturePage />}
+        {currentView === 'admin-dashboard' && (
+          <>
+            {/* Panneau d'abonnements : visible uniquement par le Super Admin */}
+            <AdminSubscriptionsPanel />
+            <AdminDashboard />
+          </>
+        )}
         {currentView === 'register' && <RegisterPage />}
         {currentView === 'login' && <LoginPage />}
         {currentView === 'reset-password' && <ResetPasswordPage />}
         {currentView === 'auth-callback' && <AuthCallbackPage />}
       </main>
 
-      {/* Footer (Displayed on public pages and architecture) */}
+      {/* Footer (Displayed on public pages) */}
       {!isPublicStoreView && !isDashboardView && !isAuthView && <Footer />}
 
       {/* Interactive Global Modals & Toasts */}
