@@ -4,6 +4,7 @@ import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
 import { Toast } from './components/common/Toast';
 import { VendorAccessGate } from './components/vendor/VendorAccessGate';
+import { VendorAssistantChat } from './components/vendor/VendorAssistantChat';
 import { AdminSubscriptionsPanel } from './components/admin/AdminSubscriptionsPanel';
 import { AuthModal } from './pages/public/AuthModal';
 import { HomePage } from './pages/public/HomePage';
@@ -105,6 +106,8 @@ const AppContent: React.FC = () => {
         {currentView === 'vendor-dashboard' && (
           <VendorAccessGate>
             <VendorDashboard />
+            {/* Discussion avec l'assistant IA (visible seulement pour la formule VIP) */}
+            <VendorAssistantChat />
           </VendorAccessGate>
         )}
         {/* Un compte non administrateur n'a jamais accès à la console : retour à l'accueil */}
