@@ -95,7 +95,7 @@ export const INITIAL_PLANS: SubscriptionPlan[] = [
   {
     id: 'vip',
     name: 'VIP',
-    tagline: 'L’offre complète : conseils de vente, IA et mise en avant auprès des acheteurs',
+    tagline: 'L’offre complète : assistant IA, conseils de vente et mise en avant auprès des acheteurs',
     priceMonthly: 25500,
     priceYearly: 255000,
     maxProducts: 500,
@@ -103,12 +103,13 @@ export const INITIAL_PLANS: SubscriptionPlan[] = [
       'Jusqu’à 500 produits',
       'Boutons de partage vers tous vos réseaux sociaux',
       'Bilan de vos ventes et conseils de vente personnalisés',
+      'Assistant IA en discussion directe : posez vos questions sur vos ventes, vos stocks et vos prix',
       'Description, tailles et prix suggérés par l’IA quand vous ajoutez un produit',
       'Mise en avant de votre boutique auprès des acheteurs (Marketplace)',
       'Commande complète et notifications de commande',
       'Agent IA : publie le lien de votre boutique toutes les 24 h sur tous vos réseaux (bientôt disponible)',
       'Scan d’un produit : l’IA le décrit et l’ajoute pour vous (bientôt disponible)',
-      'Discussion directe avec votre agent IA, qui gère votre tableau de bord (bientôt disponible)',
+      'Agent IA qui gère votre tableau de bord et vos produits à votre place (bientôt disponible)',
       '0 % de commission sur vos ventes'
     ],
     commissionRate: 0,

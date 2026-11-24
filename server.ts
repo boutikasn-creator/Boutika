@@ -5,6 +5,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { registerAiRoutes } from './server-ai';
 
 dotenv.config();
 
@@ -37,6 +38,10 @@ if (!serverSupabase) {
   console.log('[Supabase Server Architecture Notice]: SUPABASE_SERVICE_ROLE_KEY n’est pas configurée dans l’environnement serveur. Les routes réservées au Super Admin sont DÉSACTIVÉES (503) et les rappels de fin d’essai sont inactifs. Renseignez SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY dans le fichier .env.');
 } else {
   console.log('[Supabase Server Architecture]: Connecté à PostgreSQL Supabase via la clé de service sécurisée backend.');
+}
+
+if (!process.env.GEMINI_API_KEY) {
+  console.log('[Assistants IA]: GEMINI_API_KEY n’est pas configurée : Kimsi et l’assistant VIP afficheront un message « hors ligne ». Ajoutez la clé dans le fichier .env pour les activer.');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1078,6 +1083,9 @@ app.get('/api/payments/status/:orderRef', (req: Request, res: Response) => {
 app.get('/api/payments/events', requireSuperAdmin, (_req: Request, res: Response) => {
   res.json({ success: true, events: loadPaymentEvents() });
 });
+
+// Assistants IA (Kimsi pour le Super Admin, assistant de discussion pour les vendeurs VIP)
+registerAiRoutes(app, serverSupabase, requireSuperAdmin);
 
 // Setup Vite middleware in dev or static files in production
 async function startServer() {
