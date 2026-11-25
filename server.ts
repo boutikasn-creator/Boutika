@@ -24,10 +24,17 @@ app.use(
   })
 );
 
+// Valeurs d'exemple laissées par erreur (copiées depuis .env.example) : elles sont ignorées
+const isPlaceholder = (value?: string): boolean =>
+  !value || /votre[-_ ]|your[-_ ]|exemple|example|xxxx|<.*>/i.test(value.trim());
+
 // Supabase server-side client for durable storage (PostgreSQL Source of Truth)
 // Strict rule: SUPABASE_SERVICE_ROLE_KEY is strictly backend-only, never exposed to client, no VITE_ prefix
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// L'adresse du projet peut être reprise de VITE_SUPABASE_URL (c'est la même adresse).
+const supabaseUrl = [process.env.SUPABASE_URL, process.env.VITE_SUPABASE_URL].find((v) => !isPlaceholder(v));
+const supabaseServiceKey = isPlaceholder(process.env.SUPABASE_SERVICE_ROLE_KEY)
+  ? undefined
+  : process.env.SUPABASE_SERVICE_ROLE_KEY;
 const serverSupabase: SupabaseClient | null = (supabaseUrl && supabaseServiceKey)
   ? createClient(supabaseUrl, supabaseServiceKey, {
       auth: { persistSession: false, autoRefreshToken: false }
@@ -35,12 +42,15 @@ const serverSupabase: SupabaseClient | null = (supabaseUrl && supabaseServiceKey
   : null;
 
 if (!serverSupabase) {
-  console.log('[Supabase Server Architecture Notice]: SUPABASE_SERVICE_ROLE_KEY n’est pas configurée dans l’environnement serveur. Les routes réservées au Super Admin sont DÉSACTIVÉES (503) et les rappels de fin d’essai sont inactifs. Renseignez SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY dans le fichier .env.');
+  const why = isPlaceholder(process.env.SUPABASE_SERVICE_ROLE_KEY)
+    ? 'SUPABASE_SERVICE_ROLE_KEY est absente ou contient encore la valeur d’exemple'
+    : 'l’adresse du projet Supabase (SUPABASE_URL ou VITE_SUPABASE_URL) est absente ou invalide';
+  console.log(`[Supabase Server Architecture Notice]: ${why}. Les routes réservées au Super Admin, les assistants IA et les rappels de fin d’essai sont DÉSACTIVÉS. Renseignez la vraie clé « service_role » (Supabase > Project Settings > API) dans le fichier .env, puis relancez le serveur.`);
 } else {
-  console.log('[Supabase Server Architecture]: Connecté à PostgreSQL Supabase via la clé de service sécurisée backend.');
+  console.log('[Supabase Server Architecture]: Clé de service Supabase présente côté serveur (la connexion réelle est vérifiée à la première requête d’administration).');
 }
 
-if (!process.env.GEMINI_API_KEY) {
+if (isPlaceholder(process.env.GEMINI_API_KEY)) {
   console.log('[Assistants IA]: GEMINI_API_KEY n’est pas configurée : Kimsi et l’assistant VIP afficheront un message « hors ligne ». Ajoutez la clé dans le fichier .env pour les activer.');
 }
 
@@ -51,7 +61,7 @@ if (!process.env.GEMINI_API_KEY) {
 /* -------------------------------------------------------------------------- */
 async function checkSuperAdmin(req: Request): Promise<{ ok: true; userId: string } | { ok: false; status: number; message: string }> {
   if (!serverSupabase) {
-    return { ok: false, status: 503, message: 'Authentification serveur non configurée (SUPABASE_SERVICE_ROLE_KEY manquante).' };
+    return { ok: false, status: 503, message: 'Authentification serveur non configurée : renseignez la vraie clé SUPABASE_SERVICE_ROLE_KEY dans le fichier .env (Supabase > Project Settings > API), puis relancez le serveur.' };
   }
   const header = req.headers['authorization'];
   const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';
@@ -61,7 +71,18 @@ async function checkSuperAdmin(req: Request): Promise<{ ok: true; userId: string
   try {
     const { data, error } = await serverSupabase.auth.getUser(token);
     if (error || !data?.user) {
-      return { ok: false, status: 401, message: 'Session invalide ou expirée.' };
+      const msg = String(error?.message || '');
+      const status = (error as any)?.status;
+      // Supabase injoignable ou clé refusée : ce n'est PAS un problème de session, on le dit clairement
+      if (/fetch failed|network|ENOTFOUND|ECONN|api key|apikey|invalid api/i.test(msg) || (typeof status === 'number' && status >= 500)) {
+        console.error('[Auth serveur] Supabase injoignable ou clé refusée :', msg);
+        return {
+          ok: false,
+          status: 503,
+          message: 'Le serveur ne parvient pas à vérifier votre session auprès de Supabase : contrôlez SUPABASE_SERVICE_ROLE_KEY et l’adresse du projet dans le fichier .env, puis relancez le serveur.'
+        };
+      }
+      return { ok: false, status: 401, message: 'Session invalide ou expirée. Reconnectez-vous.' };
     }
     const { data: profile } = await serverSupabase
       .from('profiles')
@@ -72,8 +93,9 @@ async function checkSuperAdmin(req: Request): Promise<{ ok: true; userId: string
       return { ok: false, status: 403, message: 'Accès réservé au Super Admin.' };
     }
     return { ok: true, userId: data.user.id };
-  } catch {
-    return { ok: false, status: 401, message: 'Vérification de session impossible.' };
+  } catch (err: any) {
+    console.error('[Auth serveur] vérification impossible :', err?.message || err);
+    return { ok: false, status: 503, message: 'Vérification de session impossible : le serveur ne joint pas Supabase. Contrôlez le fichier .env.' };
   }
 }
 
@@ -468,7 +490,7 @@ function normalizeWhatsAppNumber(raw: string | null | undefined): string | null 
 async function sendTrialReminderEmail(to: string, storeName: string, planLabel: string, hoursLeft: number): Promise<{ ok: boolean; detail: string }> {
   const key = process.env.RESEND_API_KEY;
   const from = process.env.MAIL_FROM;
-  if (!key || !from) {
+  if (isPlaceholder(key) || isPlaceholder(from)) {
     return { ok: false, detail: 'non configuré : RESEND_API_KEY / MAIL_FROM absents' };
   }
   try {
@@ -503,7 +525,7 @@ async function sendTrialReminderWhatsApp(phone: string, storeName: string, hours
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const template = process.env.WHATSAPP_TRIAL_TEMPLATE;
   const lang = process.env.WHATSAPP_TEMPLATE_LANG || 'fr';
-  if (!token || !phoneId || !template) {
+  if (isPlaceholder(token) || isPlaceholder(phoneId) || isPlaceholder(template)) {
     return { ok: false, detail: 'non configuré : WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_TRIAL_TEMPLATE absents' };
   }
   try {
@@ -641,15 +663,15 @@ app.get('/api/health/details', requireSuperAdmin, (_req: Request, res: Response)
     environment: {
       storageModel: serverSupabase ? 'PostgreSQL (Supabase Direct) + Local Resilient Cache' : 'Local Ephemeral JSON Cache',
     },
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    geminiConfigured: !isPlaceholder(process.env.GEMINI_API_KEY),
     supabaseConfigured: Boolean(process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_PUBLISHABLE_KEY),
     serviceRoleConfigured: Boolean(serverSupabase),
     waveWebhookConfigured: Boolean(process.env.WAVE_WEBHOOK_SECRET),
     orangeMoneyConfigured: Boolean(process.env.ORANGE_MONEY_MERCHANT_KEY),
     metaSocialConfigured: Boolean(process.env.META_PAGE_ACCESS_TOKEN),
     whatsappWebhookConfigured: Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
-    emailRemindersConfigured: Boolean(process.env.RESEND_API_KEY && process.env.MAIL_FROM),
-    whatsappRemindersConfigured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_TRIAL_TEMPLATE)
+    emailRemindersConfigured: !isPlaceholder(process.env.RESEND_API_KEY) && !isPlaceholder(process.env.MAIL_FROM),
+    whatsappRemindersConfigured: !isPlaceholder(process.env.WHATSAPP_ACCESS_TOKEN) && !isPlaceholder(process.env.WHATSAPP_PHONE_NUMBER_ID) && !isPlaceholder(process.env.WHATSAPP_TRIAL_TEMPLATE)
   });
 });
 
