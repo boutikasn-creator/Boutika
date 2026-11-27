@@ -1,9 +1,10 @@
 /**
  * Assistants IA de Boutika — côté NAVIGATEUR.
- * Plus aucune clé d'IA ici : tous les appels passent par le serveur Boutika (routes /api/kimsi/chat,
- * /api/vip/chat et /api/vip/product-assist), qui garde la clé GEMINI_API_KEY secrète et lit les
- * vraies données de la base. Le jeton de session est ajouté automatiquement (voir apiAuth.ts).
+ * Plus aucune clé d'IA ici : tous les appels passent par le serveur Boutika, qui garde la clé
+ * GEMINI_API_KEY secrète et lit les vraies données de la base. Le jeton de session est ajouté
+ * automatiquement (voir apiAuth.ts).
  *
+ * Les réponses s'affichent EN DIRECT (mot après mot) : on n'attend plus la réponse complète.
  * Si l'IA est injoignable, l'utilisateur en est informé avec la raison : plus de faux rapport.
  */
 
@@ -11,6 +12,9 @@
 export const getGeminiClient = () => null;
 
 export type ChatTurn = { role: 'user' | 'model'; content: string };
+
+const SERVER_DOWN = 'Je n’arrive pas à joindre le serveur Boutika. Vérifiez qu’il est bien lancé (npm run dev), puis réessayez.';
+const ERROR_MARKER = '[[ERREUR]]';
 
 async function postJson(url: string, body: unknown): Promise<{ ok: boolean; status: number; data: any }> {
   try {
@@ -31,13 +35,63 @@ async function postJson(url: string, body: unknown): Promise<{ ok: boolean; stat
   }
 }
 
-const SERVER_DOWN = 'Je n’arrive pas à joindre le serveur Boutika. Vérifiez qu’il est bien lancé (npm run dev), puis réessayez.';
+/**
+ * Envoie la conversation et reçoit la réponse en continu. `onChunk` est appelé avec le texte déjà reçu.
+ */
+export async function streamChat(
+  url: string,
+  messages: ChatTurn[],
+  onChunk: (textSoFar: string) => void
+): Promise<{ ok: boolean; text: string; error?: string }> {
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: messages.slice(-14) })
+    });
 
-// Mémoire de la conversation avec Kimsi (pour qu'elle suive le fil de l'échange)
+    if (!res.ok || !res.body) {
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        /* non JSON */
+      }
+      return { ok: false, text: '', error: data?.message || 'Une erreur est survenue.' };
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let acc = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      acc += decoder.decode(value, { stream: true });
+      const idx = acc.indexOf(ERROR_MARKER);
+      onChunk(idx >= 0 ? acc.slice(0, idx) : acc);
+    }
+
+    const idx = acc.indexOf(ERROR_MARKER);
+    if (idx >= 0) {
+      return { ok: false, text: acc.slice(0, idx).trim(), error: acc.slice(idx + ERROR_MARKER.length).trim() };
+    }
+    return { ok: true, text: acc.trim() };
+  } catch {
+    return { ok: false, text: '', error: SERVER_DOWN };
+  }
+}
+
+export const streamKimsi = (messages: ChatTurn[], onChunk: (t: string) => void) =>
+  streamChat('/api/kimsi/chat-stream', messages, onChunk);
+
+export const streamVipAssistant = (messages: ChatTurn[], onChunk: (t: string) => void) =>
+  streamChat('/api/vip/chat-stream', messages, onChunk);
+
+// Mémoire de la conversation avec Kimsi pour l'ancienne interface (réponse complète)
 const kimsiHistory: ChatTurn[] = [];
 
 /**
- * Kimsi (Super Admin) : envoie votre message avec le fil de la conversation et renvoie sa réponse.
+ * Kimsi (réponse complète, sans affichage en direct) : conservé pour compatibilité.
  */
 export async function askKimsiAI(
   prompt: string,
@@ -61,7 +115,7 @@ export async function askKimsiAI(
 }
 
 /**
- * Assistant VIP (vendeur) : conversation avec l'assistant de sa boutique.
+ * Assistant VIP (réponse complète) : conservé pour compatibilité.
  */
 export async function askVipAssistant(history: ChatTurn[]): Promise<{ ok: boolean; answer: string }> {
   const r = await postJson('/api/vip/chat', { messages: history.slice(-14) });

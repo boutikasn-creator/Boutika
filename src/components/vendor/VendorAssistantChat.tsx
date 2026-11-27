@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { askVipAssistant, type ChatTurn } from '../../lib/gemini';
+import { streamVipAssistant, type ChatTurn } from '../../lib/gemini';
 import { Bot, Send, X, RefreshCw, Sparkles } from 'lucide-react';
 
 type UiMessage = { id: string; role: 'user' | 'model'; content: string; error?: boolean; local?: boolean };
@@ -14,7 +14,7 @@ const SUGGESTIONS = [
 
 /**
  * Assistant IA VIP : discussion directe avec l'assistant de la boutique (formule VIP uniquement).
- * Bulle flottante en bas à droite du tableau de bord vendeur.
+ * Bulle flottante en bas à droite du tableau de bord vendeur. La réponse s'affiche en direct.
  */
 export const VendorAssistantChat: React.FC = () => {
   const { currentUser, activeStore, plans } = useApp();
@@ -48,8 +48,9 @@ export const VendorAssistantChat: React.FC = () => {
     setInput('');
 
     const userMsg: UiMessage = { id: `u-${Date.now()}`, role: 'user', content: clean };
+    const replyId = `a-${Date.now()}`;
     const next = [...messages, userMsg];
-    setMessages(next);
+    setMessages([...next, { id: replyId, role: 'model', content: '' }]);
     setBusy(true);
 
     // Le message d'accueil est local : il n'est pas envoyé au serveur
@@ -57,11 +58,18 @@ export const VendorAssistantChat: React.FC = () => {
       .filter((m) => !m.local && !m.error)
       .map((m) => ({ role: m.role, content: m.content }));
 
-    const res = await askVipAssistant(history);
-    setMessages((prev) => [
-      ...prev,
-      { id: `a-${Date.now()}`, role: 'model', content: res.ok ? res.answer : `⚠️ ${res.answer}`, error: !res.ok }
-    ]);
+    const res = await streamVipAssistant(history, (partial) => {
+      setMessages((prev) => prev.map((m) => (m.id === replyId ? { ...m, content: partial } : m)));
+    });
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== replyId) return m;
+        if (res.ok) return { ...m, content: res.text };
+        const prefix = res.text ? `${res.text}\n\n` : '';
+        return { ...m, content: `${prefix}⚠️ ${res.error || 'Une erreur est survenue.'}`, error: true };
+      })
+    );
     setBusy(false);
   };
 
@@ -98,30 +106,34 @@ export const VendorAssistantChat: React.FC = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2.5 bg-stone-50 text-xs">
-        {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={`max-w-[85%] px-3 py-2 rounded-2xl whitespace-pre-wrap leading-relaxed ${
-                m.role === 'user'
-                  ? 'bg-amber-600 text-white rounded-br-sm'
-                  : m.error
-                  ? 'bg-red-50 text-red-800 border border-red-200 rounded-bl-sm'
-                  : 'bg-white text-stone-800 border border-stone-200 rounded-bl-sm'
-              }`}
-            >
-              {m.content}
+        {messages.map((m) => {
+          // Pendant l'attente du premier mot, on montre un indicateur plutôt qu'une bulle vide
+          if (m.role === 'model' && !m.content && busy) {
+            return (
+              <div key={m.id} className="flex justify-start">
+                <div className="px-3 py-2 rounded-2xl bg-white border border-stone-200 text-stone-500 flex items-center gap-2">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  <span>L'assistant réfléchit...</span>
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[85%] px-3 py-2 rounded-2xl whitespace-pre-wrap leading-relaxed ${
+                  m.role === 'user'
+                    ? 'bg-amber-600 text-white rounded-br-sm'
+                    : m.error
+                    ? 'bg-red-50 text-red-800 border border-red-200 rounded-bl-sm'
+                    : 'bg-white text-stone-800 border border-stone-200 rounded-bl-sm'
+                }`}
+              >
+                {m.content}
+              </div>
             </div>
-          </div>
-        ))}
-
-        {busy && (
-          <div className="flex justify-start">
-            <div className="px-3 py-2 rounded-2xl bg-white border border-stone-200 text-stone-500 flex items-center gap-2">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-              <span>L'assistant réfléchit...</span>
-            </div>
-          </div>
-        )}
+          );
+        })}
         <div ref={endRef} />
       </div>
 

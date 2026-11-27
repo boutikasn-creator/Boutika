@@ -4,11 +4,14 @@ import { GoogleGenAI } from '@google/genai';
 
 /**
  * Assistants IA de Boutika (côté SERVEUR uniquement : la clé GEMINI_API_KEY n'est jamais envoyée au navigateur).
- *  - POST /api/kimsi/chat           : Kimsi, l'assistante du Super Admin (données réelles de la plateforme)
- *  - POST /api/vip/chat             : assistant de discussion des vendeurs VIP (données de LEUR boutique seulement)
- *  - POST /api/vip/product-assist   : aide à la fiche produit des vendeurs VIP
+ *  - POST /api/kimsi/chat, /api/kimsi/chat-stream          : Kimsi, l'assistante du Super Admin
+ *  - POST /api/vip/chat, /api/vip/chat-stream              : assistant de discussion des vendeurs VIP
+ *  - POST /api/vip/product-assist                          : aide à la fiche produit des vendeurs VIP
  *
- * Variables d'environnement : GEMINI_API_KEY (obligatoire), GEMINI_MODEL (facultatif, ex: gemini-3.8-flash).
+ * Vitesse : réflexion du modèle réduite ("low"), réponse affichée en direct (streaming), vérification de
+ * session et données de contexte gardées en mémoire quelques dizaines de secondes.
+ *
+ * Variables d'environnement : GEMINI_API_KEY (obligatoire), GEMINI_MODEL (facultatif).
  */
 
 type ChatMsg = { role: 'user' | 'model'; content: string };
@@ -28,54 +31,120 @@ function modelCandidates(): string[] {
   return custom ? [custom, ...DEFAULT_MODELS.filter((m) => m !== custom)] : DEFAULT_MODELS;
 }
 
-async function callGemini(opts: { system: string; messages: ChatMsg[]; json?: boolean }): Promise<string> {
+const isPlaceholder = (value?: string): boolean =>
+  !value || /votre[-_ ]|your[-_ ]|exemple|example|xxxx|<.*>/i.test(value.trim());
+
+// Configuration d'une requête : réflexion réduite pour des réponses beaucoup plus rapides
+function buildConfig(model: string, system: string, json: boolean, withThinking: boolean): any {
+  const cfg: any = {
+    systemInstruction: system,
+    temperature: json ? 0.4 : 0.7,
+    maxOutputTokens: 2048
+  };
+  if (json) cfg.responseMimeType = 'application/json';
+  if (withThinking) {
+    if (/^gemini-3/i.test(model)) cfg.thinkingConfig = { thinkingLevel: 'low' };
+    else if (/^gemini-2\.5-flash/i.test(model)) cfg.thinkingConfig = { thinkingBudget: 0 };
+  }
+  return cfg;
+}
+
+function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  if (isPlaceholder(apiKey)) {
     throw new AiError(
       503,
       'L\u2019assistant IA est hors ligne : la clé GEMINI_API_KEY n\u2019est pas configurée sur le serveur (fichier .env). Créez-la dans Google AI Studio, ajoutez-la au fichier .env, puis relancez le serveur.'
     );
   }
+  return new GoogleGenAI({ apiKey: apiKey as string });
+}
 
-  const ai = new GoogleGenAI({ apiKey });
+function isFatalForAllModels(msg: string): boolean {
+  return /API key|API_KEY|permission|PERMISSION|UNAUTHENTICATED|401|403|quota|RESOURCE_EXHAUSTED|429/i.test(msg);
+}
+
+function mapAiError(lastErr: any): AiError {
+  const raw = String(lastErr?.message || lastErr || 'erreur inconnue');
+  console.error('[IA] échec de l\u2019appel Gemini :', raw.slice(0, 400));
+  if (/API key|API_KEY|UNAUTHENTICATED|401|403|permission/i.test(raw)) {
+    return new AiError(502, 'La clé GEMINI_API_KEY est refusée par Google (invalide, désactivée ou sans accès). Vérifiez-la dans Google AI Studio.');
+  }
+  if (/quota|429|RESOURCE_EXHAUSTED/i.test(raw)) {
+    return new AiError(429, 'Le quota de l\u2019API Gemini est atteint pour le moment. Réessayez dans quelques minutes.');
+  }
+  if (/not found|404|NOT_FOUND/i.test(raw)) {
+    return new AiError(502, 'Aucun des modèles Gemini configurés n\u2019est disponible. Renseignez GEMINI_MODEL dans le fichier .env avec un modèle valide.');
+  }
+  return new AiError(502, 'Le moteur d\u2019IA n\u2019a pas répondu correctement. Réessayez dans un instant.');
+}
+
+/** Appel classique (réponse complète). */
+async function callGemini(opts: { system: string; messages: ChatMsg[]; json?: boolean }): Promise<string> {
+  const ai = getClient();
   let lastErr: any = null;
 
   for (const model of modelCandidates()) {
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: opts.messages.map((m) => ({ role: m.role, parts: [{ text: m.content }] })),
-        config: {
-          systemInstruction: opts.system,
-          temperature: opts.json ? 0.4 : 0.7,
-          maxOutputTokens: 2048,
-          ...(opts.json ? { responseMimeType: 'application/json' } : {})
-        }
-      });
-      const text = (response.text || '').trim();
-      if (text) return text;
-      lastErr = new Error('Réponse vide');
-    } catch (err: any) {
-      lastErr = err;
-      const msg = String(err?.message || err);
-      // Clé refusée ou quota atteint : inutile d'essayer un autre modèle
-      if (/API key|API_KEY|permission|PERMISSION|UNAUTHENTICATED|401|403|quota|RESOURCE_EXHAUSTED|429/i.test(msg)) break;
+    for (const withThinking of [true, false]) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: opts.messages.map((m) => ({ role: m.role, parts: [{ text: m.content }] })),
+          config: buildConfig(model, opts.system, Boolean(opts.json), withThinking)
+        });
+        const text = (response.text || '').trim();
+        if (text) return text;
+        lastErr = new Error('Réponse vide');
+        break;
+      } catch (err: any) {
+        lastErr = err;
+        const msg = String(err?.message || err);
+        if (isFatalForAllModels(msg)) throw mapAiError(err);
+        if (withThinking && /thinking/i.test(msg)) continue; // réessai sans réglage de réflexion
+        break;
+      }
     }
   }
+  throw mapAiError(lastErr);
+}
 
-  const raw = String(lastErr?.message || lastErr || 'erreur inconnue');
-  console.error('[IA] échec de l\u2019appel Gemini :', raw.slice(0, 400));
+/** Ouvre une réponse en continu : renvoie le premier morceau de texte et la suite. */
+async function openGeminiStream(opts: { system: string; messages: ChatMsg[] }): Promise<{
+  first: string;
+  iterator: AsyncIterator<any>;
+  model: string;
+}> {
+  const ai = getClient();
+  let lastErr: any = null;
 
-  if (/API key|API_KEY|UNAUTHENTICATED|401|403|permission/i.test(raw)) {
-    throw new AiError(502, 'La clé GEMINI_API_KEY est refusée par Google (invalide, désactivée ou sans accès). Vérifiez-la dans Google AI Studio.');
+  for (const model of modelCandidates()) {
+    for (const withThinking of [true, false]) {
+      try {
+        const stream: any = await ai.models.generateContentStream({
+          model,
+          contents: opts.messages.map((m) => ({ role: m.role, parts: [{ text: m.content }] })),
+          config: buildConfig(model, opts.system, false, withThinking)
+        });
+        const iterator: AsyncIterator<any> = stream[Symbol.asyncIterator]();
+        let first = '';
+        while (!first) {
+          const r = await iterator.next();
+          if (r.done) break;
+          first = (r.value && r.value.text) || '';
+        }
+        if (first) return { first, iterator, model };
+        lastErr = new Error('Réponse vide');
+        break;
+      } catch (err: any) {
+        lastErr = err;
+        const msg = String(err?.message || err);
+        if (isFatalForAllModels(msg)) throw mapAiError(err);
+        if (withThinking && /thinking/i.test(msg)) continue;
+        break;
+      }
+    }
   }
-  if (/quota|429|RESOURCE_EXHAUSTED/i.test(raw)) {
-    throw new AiError(429, 'Le quota de l\u2019API Gemini est atteint pour le moment. Réessayez dans quelques minutes.');
-  }
-  if (/not found|404|NOT_FOUND/i.test(raw)) {
-    throw new AiError(502, 'Aucun des modèles Gemini configurés n\u2019est disponible. Renseignez GEMINI_MODEL dans le fichier .env avec un modèle valide.');
-  }
-  throw new AiError(502, 'Le moteur d\u2019IA n\u2019a pas répondu correctement. Réessayez dans un instant.');
+  throw mapAiError(lastErr);
 }
 
 // Limitation simple : au plus `max` appels par `windowMs` pour une même personne
@@ -106,7 +175,67 @@ function sanitizeMessages(raw: unknown): ChatMsg[] | null {
   return msgs;
 }
 
-const fmt = (n: number) => new Intl.NumberFormat('fr-FR').format(Math.round(n));
+/* -------------------------------------------------------------------------- */
+/* Mémoire courte (cache) : évite de refaire les mêmes requêtes à chaque message */
+/* -------------------------------------------------------------------------- */
+const AUTH_TTL_MS = 60 * 1000;
+const CONTEXT_TTL_MS = 30 * 1000;
+
+const adminAuthCache = new Map<string, { userId: string; exp: number }>();
+const vipAuthCache = new Map<string, { userId: string; store: any; exp: number }>();
+const adminContextCache: { value: Record<string, unknown> | null; exp: number } = { value: null, exp: 0 };
+const storeContextCache = new Map<string, { value: Record<string, unknown>; exp: number }>();
+
+function pruneCaches() {
+  const now = Date.now();
+  for (const [k, v] of adminAuthCache) if (v.exp < now) adminAuthCache.delete(k);
+  for (const [k, v] of vipAuthCache) if (v.exp < now) vipAuthCache.delete(k);
+  for (const [k, v] of storeContextCache) if (v.exp < now) storeContextCache.delete(k);
+}
+
+function bearerToken(req: Request): string {
+  const header = req.headers['authorization'];
+  return typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
+function authFailure(error: any): { ok: false; status: number; message: string } {
+  const msg = String(error?.message || '');
+  const status = error?.status;
+  if (/fetch failed|network|ENOTFOUND|ECONN|api key|apikey|invalid api/i.test(msg) || (typeof status === 'number' && status >= 500)) {
+    return {
+      ok: false,
+      status: 503,
+      message: 'Le serveur ne parvient pas à vérifier votre session auprès de Supabase : contrôlez SUPABASE_SERVICE_ROLE_KEY et l\u2019adresse du projet dans le fichier .env, puis relancez le serveur.'
+    };
+  }
+  return { ok: false, status: 401, message: 'Session invalide ou expirée. Reconnectez-vous.' };
+}
+
+async function checkAdminCached(
+  db: SupabaseClient | null,
+  req: Request
+): Promise<{ ok: true; userId: string } | { ok: false; status: number; message: string }> {
+  if (!db) return { ok: false, status: 503, message: 'Serveur non configuré : renseignez la vraie clé SUPABASE_SERVICE_ROLE_KEY dans le fichier .env.' };
+  const token = bearerToken(req);
+  if (!token) return { ok: false, status: 401, message: 'Authentification requise.' };
+
+  const hit = adminAuthCache.get(token);
+  if (hit && hit.exp > Date.now()) return { ok: true, userId: hit.userId };
+
+  try {
+    const { data, error } = await db.auth.getUser(token);
+    if (error || !data?.user) return authFailure(error);
+    const { data: profile } = await db.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
+    if (!profile || profile.role !== 'super_admin') {
+      return { ok: false, status: 403, message: 'Accès réservé au Super Admin.' };
+    }
+    if (adminAuthCache.size > 300) pruneCaches();
+    adminAuthCache.set(token, { userId: data.user.id, exp: Date.now() + AUTH_TTL_MS });
+    return { ok: true, userId: data.user.id };
+  } catch (err: any) {
+    return authFailure(err);
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* Contexte réel : plateforme (Super Admin)                                    */
@@ -132,13 +261,19 @@ async function buildAdminContext(db: SupabaseClient): Promise<Record<string, unk
 
   let enEssai = 0;
   let bloquees = 0;
+  const bientotBloquees: string[] = [];
   const parFormule: Record<string, number> = { standard: 0, premium: 0, vip: 0 };
   storeRows.forEach((s: any) => {
     const plan = s.plan_id === 'decouverte' ? 'standard' : String(s.plan_id || 'standard');
     parFormule[plan] = (parFormule[plan] || 0) + 1;
     if (!activeStoreIds.has(String(s.id))) {
-      if (s.trial_end_date && new Date(s.trial_end_date).getTime() > now) enEssai++;
-      else bloquees++;
+      const end = s.trial_end_date ? new Date(s.trial_end_date).getTime() : 0;
+      if (end > now) {
+        enEssai++;
+        if (end - now < 48 * 3600 * 1000) bientotBloquees.push(`${s.name} (fin le ${String(s.trial_end_date).slice(0, 16)})`);
+      } else {
+        bloquees++;
+      }
     }
   });
 
@@ -155,6 +290,7 @@ async function buildAdminContext(db: SupabaseClient): Promise<Record<string, unk
       actives: storeRows.filter((s: any) => s.status === 'active').length,
       par_formule: parFormule,
       en_essai_gratuit: enEssai,
+      essais_qui_se_terminent_dans_48h: bientotBloquees,
       bloquees_essai_termine_sans_abonnement: bloquees,
       avec_abonnement_actif: activeStoreIds.size
     },
@@ -179,6 +315,20 @@ async function buildAdminContext(db: SupabaseClient): Promise<Record<string, unk
   };
 }
 
+async function getAdminContextCached(db: SupabaseClient | null): Promise<Record<string, unknown>> {
+  if (!db) return { avertissement: 'Données de la base indisponibles pour le moment.' };
+  if (adminContextCache.value && adminContextCache.exp > Date.now()) return adminContextCache.value;
+  try {
+    const value = await buildAdminContext(db);
+    adminContextCache.value = value;
+    adminContextCache.exp = Date.now() + CONTEXT_TTL_MS;
+    return value;
+  } catch (e: any) {
+    console.warn('[Kimsi] contexte indisponible :', e?.message || e);
+    return { avertissement: 'Données de la base indisponibles pour le moment.' };
+  }
+}
+
 const ADMIN_SYSTEM = (context: Record<string, unknown>) => `Tu es Kimsi, l'assistante IA personnelle du Super Administrateur de Boutika. Boutika est une plateforme qui permet aux commerçants du Sénégal et d'Afrique francophone de créer leur boutique en ligne. Les formules sont payantes : Standard 5 000 FCFA, Premium 12 500 FCFA et VIP 25 500 FCFA par mois, avec 3 jours d'essai gratuit (une seule fois par vendeur).
 
 STYLE
@@ -190,7 +340,7 @@ DONNÉES
 - Les chiffres ci-dessous sont les chiffres RÉELS de la plateforme à l'instant. Utilise-les seulement quand c'est pertinent. Ne les invente jamais. Si une valeur est 0 ou vide, dis-le tel quel. Si tu n'as pas l'information, dis « je n'ai pas cette information ».
 
 ACTIONS
-- Tu ne modifies rien toi-même. Quand une action serait utile (activer une formule, rouvrir un essai, contacter un vendeur), explique comment la faire (panneau « Abonnements & essais » de la console) et propose-la, sans prétendre l'avoir faite.
+- Tu ne modifies rien toi-même. Quand une action serait utile (activer une formule, rouvrir un essai, suspendre une boutique, contacter un vendeur), explique où la faire dans la console (onglets Boutiques, Abonnements, Mise en avant, Messages) et propose-la, sans prétendre l'avoir faite.
 
 LIMITES ET SÉCURITÉ
 - Tu parles de la plateforme Boutika, de gestion, de stratégie commerciale et du marché local. Pour le reste, redirige poliment.
@@ -266,6 +416,16 @@ async function buildStoreContext(db: SupabaseClient, store: any): Promise<Record
   };
 }
 
+async function getStoreContextCached(db: SupabaseClient, store: any): Promise<Record<string, unknown>> {
+  const key = String(store.id);
+  const hit = storeContextCache.get(key);
+  if (hit && hit.exp > Date.now()) return hit.value;
+  const value = await buildStoreContext(db, store);
+  if (storeContextCache.size > 300) pruneCaches();
+  storeContextCache.set(key, { value, exp: Date.now() + CONTEXT_TTL_MS });
+  return value;
+}
+
 const VIP_SYSTEM = (storeName: string, context: Record<string, unknown>) => `Tu es l'assistant IA VIP de la boutique « ${storeName} » sur Boutika, la plateforme e-commerce des commerçants du Sénégal. Tu aides le/la commerçant(e) à mieux vendre et à mieux gérer sa boutique.
 
 STYLE
@@ -293,14 +453,22 @@ async function checkVipVendor(
   db: SupabaseClient,
   req: Request
 ): Promise<{ ok: true; userId: string; store: any } | { ok: false; status: number; message: string }> {
-  const header = req.headers['authorization'];
-  const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const token = bearerToken(req);
   if (!token) return { ok: false, status: 401, message: 'Connexion requise.' };
 
-  const { data, error } = await db.auth.getUser(token);
-  if (error || !data?.user) return { ok: false, status: 401, message: 'Session invalide ou expirée. Reconnectez-vous.' };
+  const hit = vipAuthCache.get(token);
+  if (hit && hit.exp > Date.now()) return { ok: true, userId: hit.userId, store: hit.store };
 
-  const { data: stores } = await db.from('stores').select('*').eq('vendor_id', data.user.id).limit(1);
+  let userId = '';
+  try {
+    const { data, error } = await db.auth.getUser(token);
+    if (error || !data?.user) return authFailure(error);
+    userId = data.user.id;
+  } catch (err: any) {
+    return authFailure(err);
+  }
+
+  const { data: stores } = await db.from('stores').select('*').eq('vendor_id', userId).limit(1);
   const store = stores && stores[0];
   if (!store) return { ok: false, status: 404, message: 'Aucune boutique associée à ce compte.' };
 
@@ -322,7 +490,9 @@ async function checkVipVendor(
     return { ok: false, status: 403, message: 'Votre accès est expiré : activez votre formule pour utiliser l\u2019assistant.' };
   }
 
-  return { ok: true, userId: data.user.id, store };
+  if (vipAuthCache.size > 300) pruneCaches();
+  vipAuthCache.set(token, { userId, store, exp: Date.now() + AUTH_TTL_MS });
+  return { ok: true, userId, store };
 }
 
 function sendAiError(res: Response, err: unknown) {
@@ -333,30 +503,45 @@ function sendAiError(res: Response, err: unknown) {
   return res.status(500).json({ success: false, message: 'Erreur interne de l\u2019assistant IA.' });
 }
 
+/** Écrit la réponse en continu (texte brut). Les erreurs en cours de route sont ajoutées à la fin. */
+async function pipeStream(
+  res: Response,
+  stream: { first: string; iterator: AsyncIterator<any> }
+): Promise<void> {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof (res as any).flushHeaders === 'function') (res as any).flushHeaders();
+  res.write(stream.first);
+  try {
+    for (;;) {
+      const r = await stream.iterator.next();
+      if (r.done) break;
+      const t = r.value && r.value.text;
+      if (t) res.write(t);
+    }
+  } catch (err: any) {
+    const mapped = mapAiError(err);
+    res.write(`\n[[ERREUR]] ${mapped.message}`);
+  }
+  res.end();
+}
+
 /* -------------------------------------------------------------------------- */
 /* Routes                                                                      */
 /* -------------------------------------------------------------------------- */
 export function registerAiRoutes(app: Express, db: SupabaseClient | null, requireSuperAdmin: RequestHandler): void {
-  // Kimsi : Super Admin uniquement
+  // Kimsi : réponse complète (conservée pour compatibilité)
   app.post('/api/kimsi/chat', requireSuperAdmin, async (req: Request, res: Response) => {
     const messages = sanitizeMessages(req.body?.messages);
-    if (!messages) {
-      return res.status(400).json({ success: false, message: 'Message vide ou invalide.' });
-    }
+    if (!messages) return res.status(400).json({ success: false, message: 'Message vide ou invalide.' });
     const adminId = String((req as any).adminUserId || 'admin');
     if (isRateLimited(`kimsi:${adminId}`, 60, 60 * 60 * 1000)) {
       return res.status(429).json({ success: false, message: 'Trop de messages en peu de temps. Patientez quelques minutes.' });
     }
-
     try {
-      let context: Record<string, unknown> = { avertissement: 'Données de la base indisponibles pour le moment.' };
-      if (db) {
-        try {
-          context = await buildAdminContext(db);
-        } catch (e: any) {
-          console.warn('[Kimsi] contexte indisponible :', e?.message || e);
-        }
-      }
+      const context = await getAdminContextCached(db);
       const answer = await callGemini({ system: ADMIN_SYSTEM(context), messages });
       res.json({
         success: true,
@@ -368,25 +553,44 @@ export function registerAiRoutes(app: Express, db: SupabaseClient | null, requir
     }
   });
 
-  // Assistant VIP : conversation
-  app.post('/api/vip/chat', async (req: Request, res: Response) => {
-    if (!db) {
-      return res.status(503).json({ success: false, message: 'Serveur non configuré (SUPABASE_SERVICE_ROLE_KEY manquante).' });
-    }
+  // Kimsi : réponse affichée en direct (streaming)
+  app.post('/api/kimsi/chat-stream', async (req: Request, res: Response) => {
+    const t0 = Date.now();
+    const auth = await checkAdminCached(db, req);
+    if (!auth.ok) return res.status(auth.status).json({ success: false, message: auth.message });
+
     const messages = sanitizeMessages(req.body?.messages);
-    if (!messages) {
-      return res.status(400).json({ success: false, message: 'Message vide ou invalide.' });
+    if (!messages) return res.status(400).json({ success: false, message: 'Message vide ou invalide.' });
+    if (isRateLimited(`kimsi:${auth.userId}`, 60, 60 * 60 * 1000)) {
+      return res.status(429).json({ success: false, message: 'Trop de messages en peu de temps. Patientez quelques minutes.' });
     }
 
     try {
+      const t1 = Date.now();
+      const context = await getAdminContextCached(db);
+      const t2 = Date.now();
+      const stream = await openGeminiStream({ system: ADMIN_SYSTEM(context), messages });
+      const t3 = Date.now();
+      await pipeStream(res, stream);
+      console.log(`[Kimsi] session ${t1 - t0} ms • données ${t2 - t1} ms • 1er mot ${t3 - t2} ms • total ${Date.now() - t0} ms (${stream.model})`);
+    } catch (err) {
+      if (!res.headersSent) sendAiError(res, err);
+      else res.end();
+    }
+  });
+
+  // Assistant VIP : conversation complète (conservée pour compatibilité)
+  app.post('/api/vip/chat', async (req: Request, res: Response) => {
+    if (!db) return res.status(503).json({ success: false, message: 'Serveur non configuré : renseignez la vraie clé SUPABASE_SERVICE_ROLE_KEY dans le fichier .env.' });
+    const messages = sanitizeMessages(req.body?.messages);
+    if (!messages) return res.status(400).json({ success: false, message: 'Message vide ou invalide.' });
+    try {
       const auth = await checkVipVendor(db, req);
       if (!auth.ok) return res.status(auth.status).json({ success: false, message: auth.message });
-
       if (isRateLimited(`vip:${auth.userId}`, 40, 60 * 60 * 1000)) {
         return res.status(429).json({ success: false, message: 'Vous avez envoyé beaucoup de messages : réessayez dans quelques minutes.' });
       }
-
-      const context = await buildStoreContext(db, auth.store);
+      const context = await getStoreContextCached(db, auth.store);
       const answer = await callGemini({ system: VIP_SYSTEM(String(auth.store.name), context), messages });
       res.json({ success: true, answer });
     } catch (err) {
@@ -394,20 +598,41 @@ export function registerAiRoutes(app: Express, db: SupabaseClient | null, requir
     }
   });
 
-  // Assistant VIP : aide à la fiche produit (description, catégorie, prix, tailles, couleurs)
-  app.post('/api/vip/product-assist', async (req: Request, res: Response) => {
-    if (!db) {
-      return res.status(503).json({ success: false, message: 'Serveur non configuré (SUPABASE_SERVICE_ROLE_KEY manquante).' });
-    }
-    const hint = String(req.body?.hint ?? '').trim().slice(0, 300);
-    if (!hint) {
-      return res.status(400).json({ success: false, message: 'Décrivez le produit (au moins son nom).' });
-    }
+  // Assistant VIP : réponse affichée en direct (streaming)
+  app.post('/api/vip/chat-stream', async (req: Request, res: Response) => {
+    const t0 = Date.now();
+    if (!db) return res.status(503).json({ success: false, message: 'Serveur non configuré : renseignez la vraie clé SUPABASE_SERVICE_ROLE_KEY dans le fichier .env.' });
+    const messages = sanitizeMessages(req.body?.messages);
+    if (!messages) return res.status(400).json({ success: false, message: 'Message vide ou invalide.' });
 
     try {
       const auth = await checkVipVendor(db, req);
       if (!auth.ok) return res.status(auth.status).json({ success: false, message: auth.message });
+      if (isRateLimited(`vip:${auth.userId}`, 40, 60 * 60 * 1000)) {
+        return res.status(429).json({ success: false, message: 'Vous avez envoyé beaucoup de messages : réessayez dans quelques minutes.' });
+      }
+      const t1 = Date.now();
+      const context = await getStoreContextCached(db, auth.store);
+      const t2 = Date.now();
+      const stream = await openGeminiStream({ system: VIP_SYSTEM(String(auth.store.name), context), messages });
+      const t3 = Date.now();
+      await pipeStream(res, stream);
+      console.log(`[Assistant VIP] session ${t1 - t0} ms • données ${t2 - t1} ms • 1er mot ${t3 - t2} ms • total ${Date.now() - t0} ms (${stream.model})`);
+    } catch (err) {
+      if (!res.headersSent) sendAiError(res, err);
+      else res.end();
+    }
+  });
 
+  // Assistant VIP : aide à la fiche produit (description, catégorie, prix, tailles, couleurs)
+  app.post('/api/vip/product-assist', async (req: Request, res: Response) => {
+    if (!db) return res.status(503).json({ success: false, message: 'Serveur non configuré : renseignez la vraie clé SUPABASE_SERVICE_ROLE_KEY dans le fichier .env.' });
+    const hint = String(req.body?.hint ?? '').trim().slice(0, 300);
+    if (!hint) return res.status(400).json({ success: false, message: 'Décrivez le produit (au moins son nom).' });
+
+    try {
+      const auth = await checkVipVendor(db, req);
+      if (!auth.ok) return res.status(auth.status).json({ success: false, message: auth.message });
       if (isRateLimited(`vipprod:${auth.userId}`, 30, 60 * 60 * 1000)) {
         return res.status(429).json({ success: false, message: 'Limite atteinte pour l\u2019instant : réessayez dans quelques minutes.' });
       }
@@ -439,5 +664,3 @@ export function registerAiRoutes(app: Express, db: SupabaseClient | null, requir
     }
   });
 }
-
-export { fmt as formatNumberFr };
